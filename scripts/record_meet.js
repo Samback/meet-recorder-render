@@ -78,8 +78,10 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
         try {
           if (indicator.startsWith('text=')) {
             const text = indicator.replace('text=', '');
-            const elements = await page.$x(`//*[contains(text(), '${text}')]`);
-            if (elements.length > 0) {
+            const found = await page.evaluate((searchText) => {
+              return document.body.textContent.includes(searchText);
+            }, text);
+            if (found) {
               needsLogin = true;
               console.log(`Login needed - found: "${text}"`);
               break;
@@ -151,30 +153,83 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
               }
             }
             
-            // Try text-based search as fallback
+            // Try text-based search as fallback using evaluate instead of $x
             if (!signInClicked) {
               try {
                 const signInTexts = ['Sign in', 'Sign In', 'SIGN IN', 'Login', 'LOG IN'];
                 for (const text of signInTexts) {
-                  const elements = await page.$x(`//*[contains(text(), '${text}')]`);
-                  if (elements.length > 0) {
-                    for (const element of elements) {
-                      try {
-                        const isVisible = await element.evaluate(el => {
-                          const rect = el.getBoundingClientRect();
-                          return rect.width > 0 && rect.height > 0;
-                        });
-                        if (isVisible) {
-                          await element.click();
-                          console.log(`Clicked sign in text: "${text}"`);
-                          signInClicked = true;
-                          break;
+                  const clickableElements = await page.evaluate((searchText) => {
+                    const walker = document.createTreeWalker(
+                      document.body,
+                      NodeFilter.SHOW_TEXT,
+                      null,
+                      false
+                    );
+                    
+                    const matchingElements = [];
+                    let node;
+                    
+                    while (node = walker.nextNode()) {
+                      if (node.textContent.trim() === searchText) {
+                        let element = node.parentElement;
+                        while (element) {
+                          if (element.tagName === 'BUTTON' || element.tagName === 'A' || 
+                              element.getAttribute('role') === 'button' ||
+                              element.onclick || element.getAttribute('data-action')) {
+                            const rect = element.getBoundingClientRect();
+                            if (rect.width > 0 && rect.height > 0) {
+                              matchingElements.push({
+                                tagName: element.tagName,
+                                text: element.textContent.trim(),
+                                className: element.className,
+                                id: element.id
+                              });
+                              break;
+                            }
+                          }
+                          element = element.parentElement;
                         }
-                      } catch (e) {
-                        continue;
                       }
                     }
-                    if (signInClicked) break;
+                    return matchingElements;
+                  }, text);
+                  
+                  if (clickableElements.length > 0) {
+                    // Try to click the first matching element
+                    const clicked = await page.evaluate((searchText) => {
+                      const walker = document.createTreeWalker(
+                        document.body,
+                        NodeFilter.SHOW_TEXT,
+                        null,
+                        false
+                      );
+                      
+                      let node;
+                      while (node = walker.nextNode()) {
+                        if (node.textContent.trim() === searchText) {
+                          let element = node.parentElement;
+                          while (element) {
+                            if (element.tagName === 'BUTTON' || element.tagName === 'A' || 
+                                element.getAttribute('role') === 'button' ||
+                                element.onclick || element.getAttribute('data-action')) {
+                              const rect = element.getBoundingClientRect();
+                              if (rect.width > 0 && rect.height > 0) {
+                                element.click();
+                                return true;
+                              }
+                            }
+                            element = element.parentElement;
+                          }
+                        }
+                      }
+                      return false;
+                    }, text);
+                    
+                    if (clicked) {
+                      console.log(`Clicked sign in text: "${text}"`);
+                      signInClicked = true;
+                      break;
+                    }
                   }
                 }
               } catch (e) {
@@ -185,7 +240,14 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
             if (signInClicked) {
               // Wait for navigation to login page
               console.log('Waiting for navigation to Google login page...');
-              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+              try {
+                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+              } catch (e) {
+                console.log('Navigation timeout, but continuing - may have navigated');
+              }
+              
+              // Extra wait for page to stabilize
+              await new Promise(resolve => setTimeout(resolve, 2000));
             }
           } else {
             console.log('Already on Google login page');
@@ -198,26 +260,45 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           await page.screenshot({ path: afterClickScreenshot, fullPage: true });
           console.log(`After navigation screenshot saved: ${afterClickScreenshot}`);
           
+          // Check current URL again after potential navigation
+          const newUrl = page.url();
+          console.log(`Current URL after navigation: ${newUrl}`);
+          
           // Try multiple selectors for email field with longer timeout
           const emailSelectors = [
             'input[type="email"]',
             '#identifierId',
             'input[name="identifier"]',
             'input[autocomplete="username"]',
-            '#Email'
+            'input[autocomplete="email"]',
+            'input[name="Email"]',
+            '#Email',
+            'input[id*="email"]',
+            'input[id*="identifier"]'
           ];
           
           let emailField = null;
+          
+          // First wait for the page to be on a Google login URL
+          let waitCount = 0;
+          while (!page.url().includes('accounts.google.com') && waitCount < 10) {
+            console.log(`Waiting for Google login page... (attempt ${waitCount + 1})`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            waitCount++;
+          }
+          
+          console.log(`Final URL before email field search: ${page.url()}`);
+          
           for (const selector of emailSelectors) {
             try {
               console.log(`Looking for email field: ${selector}`);
-              emailField = await page.waitForSelector(selector, { timeout: 5000 });
+              emailField = await page.waitForSelector(selector, { timeout: 8000 });
               if (emailField) {
                 console.log(`Found email field: ${selector}`);
                 break;
               }
             } catch (e) {
-              console.log(`Email selector failed: ${selector}`);
+              console.log(`Email selector failed: ${selector} - ${e.message}`);
             }
           }
           
@@ -296,8 +377,10 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       try {
         if (selector.startsWith('text=')) {
           const text = selector.replace('text=', '');
-          const elements = await page.$x(`//*[contains(text(), '${text}')]`);
-          if (elements.length > 0) {
+          const found = await page.evaluate((searchText) => {
+            return document.body.textContent.includes(searchText);
+          }, text);
+          if (found) {
             accessDenied = true;
             console.log(`Access denied detected: "${text}"`);
             break;
@@ -338,8 +421,10 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
         try {
           if (selector.startsWith('text=')) {
             const text = selector.replace('text=', '');
-            const elements = await page.$x(`//*[contains(text(), '${text}')]`);
-            if (elements.length === 0) {
+            const found = await page.evaluate((searchText) => {
+              return document.body.textContent.includes(searchText);
+            }, text);
+            if (!found) {
               accessGranted = true;
               break;
             }
