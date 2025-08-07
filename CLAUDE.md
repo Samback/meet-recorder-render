@@ -109,7 +109,15 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 1. Logs into Google account before joining meeting
 2. Navigates to Google Meet as authenticated user
 3. Joins meeting with account identity
-4. Records as the specified user
+4. Starts audio recording
+5. Returns success response only after recording is active
+
+**API Response Behavior:**
+- **OLD**: Returned immediately when request received
+- **NEW**: Waits until recording actually starts before responding
+- **Timeout**: 90 seconds for full initialization
+- **Success**: Returns when FFmpeg audio recording is confirmed active
+- **Failure**: Returns error if authentication, join, or recording fails
 
 **Security notes:**
 - Credentials are not logged or stored permanently

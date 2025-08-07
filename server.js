@@ -95,19 +95,32 @@ app.post('/api/record', async (req, res) => {
     
     fs.writeFileSync(`${recordingDir}/metadata.json`, JSON.stringify(metadata, null, 2));
     
-    // Start recording process
-    const recordingProcess = startRecording(recordingId, meetUrl, options, googleAuth);
-    activeRecordings.set(recordingId, recordingProcess);
+    // Start recording process and wait for actual start
+    res.setTimeout(120000); // 2 minute timeout for initialization
     
-    // Return immediate response
-    res.json({
-      success: true,
-      recordingId,
-      status: 'initializing',
-      message: 'Recording process started',
-      statusUrl: `/api/status/${recordingId}`,
-      downloadUrl: `/api/download/${recordingId}`
-    });
+    try {
+      const result = await startRecordingAndWait(recordingId, meetUrl, options, googleAuth);
+      
+      res.json({
+        success: true,
+        recordingId,
+        status: result.status,
+        message: result.message,
+        statusUrl: `/api/status/${recordingId}`,
+        downloadUrl: `/api/download/${recordingId}`,
+        startedAt: result.startedAt,
+        authentication: result.authentication
+      });
+      
+    } catch (error) {
+      console.error(`Recording initialization failed for ${recordingId}:`, error.message);
+      res.status(400).json({
+        success: false,
+        recordingId,
+        error: error.message,
+        statusUrl: `/api/status/${recordingId}`
+      });
+    }
     
   } catch (error) {
     console.error('Start recording error:', error);
@@ -325,33 +338,90 @@ app.post('/api/stop/:recordingId', (req, res) => {
   }
 });
 
-// Start recording function
-function startRecording(recordingId, meetUrl, options, googleAuth = {}) {
-  const recordingDir = `/tmp/recordings/${recordingId}`;
-  
-  // Spawn recording process
-  const process = spawn('node', ['scripts/record_meet.js', recordingId, meetUrl, JSON.stringify(options), JSON.stringify(googleAuth)], {
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe']
+// Start recording and wait for actual start
+async function startRecordingAndWait(recordingId, meetUrl, options, googleAuth = {}) {
+  return new Promise((resolve, reject) => {
+    const recordingDir = `${RECORDINGS_DIR}/${recordingId}`;
+    const timeoutMs = 90000; // 1.5 minute timeout
+    
+    // Spawn recording process
+    const process = spawn('node', ['scripts/record_meet.js', recordingId, meetUrl, JSON.stringify(options), JSON.stringify(googleAuth)], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    
+    activeRecordings.set(recordingId, process);
+    
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        reject(new Error('Recording initialization timeout - process took too long to start'));
+      }
+    }, timeoutMs);
+    
+    // Log output and monitor for success states
+    process.stdout.on('data', (data) => {
+      const output = data.toString();
+      console.log(`[${recordingId}] ${output}`);
+      fs.appendFileSync(`${recordingDir}/process.log`, output);
+      
+      // Check for successful recording start
+      if (output.includes('FFmpeg process started successfully') && !resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        
+        // Read current metadata for response
+        const metadata = JSON.parse(fs.readFileSync(`${recordingDir}/metadata.json`, 'utf8'));
+        
+        resolve({
+          status: 'recording_active',
+          message: '🎥 Recording started successfully! Audio capture is active.',
+          startedAt: new Date().toISOString(),
+          authentication: metadata.authentication
+        });
+      }
+      
+      // Check for authentication completion
+      if (output.includes('Google authentication completed') && !resolved) {
+        console.log(`[${recordingId}] Authentication successful, continuing...`);
+      }
+    });
+    
+    process.stderr.on('data', (data) => {
+      const error = data.toString();
+      console.error(`[${recordingId}] ${error}`);
+      fs.appendFileSync(`${recordingDir}/error.log`, error);
+      
+      // Check for critical errors that should fail the request
+      if ((error.includes('Authentication failed') || 
+           error.includes('Meeting access denied') ||
+           error.includes('FFmpeg failed to start')) && !resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(new Error(error.trim()));
+      }
+    });
+    
+    process.on('close', (code) => {
+      console.log(`Recording ${recordingId} finished with code ${code}`);
+      activeRecordings.delete(recordingId);
+      
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(new Error(`Recording process exited with code ${code} before starting`));
+      }
+    });
+    
+    process.on('error', (error) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        reject(new Error(`Failed to spawn recording process: ${error.message}`));
+      }
+    });
   });
-  
-  // Log output
-  process.stdout.on('data', (data) => {
-    console.log(`[${recordingId}] ${data}`);
-    fs.appendFileSync(`${recordingDir}/process.log`, data);
-  });
-  
-  process.stderr.on('data', (data) => {
-    console.error(`[${recordingId}] ${data}`);
-    fs.appendFileSync(`${recordingDir}/error.log`, data);
-  });
-  
-  process.on('close', (code) => {
-    console.log(`Recording ${recordingId} finished with code ${code}`);
-    activeRecordings.delete(recordingId);
-  });
-  
-  return process;
 }
 
 // Cleanup old recordings (daily)
