@@ -110,50 +110,93 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           await page.screenshot({ path: authScreenshot, fullPage: true });
           console.log(`Auth screenshot saved: ${authScreenshot}`);
           
-          // Try to click "Sign in" or similar link if present
-          const signInSelectors = [
-            'a[href*="accounts.google.com"]',
-            'button:contains("Sign in")',
-            '[aria-label*="Sign in"]',
-            'text=Sign in'
-          ];
+          // Check if we're already on a Google login page
+          const currentUrl = page.url();
+          const isOnGoogleLogin = currentUrl.includes('accounts.google.com');
+          
+          console.log(`Current URL: ${currentUrl}`);
+          console.log(`Already on Google login page: ${isOnGoogleLogin}`);
           
           let signInClicked = false;
-          for (const selector of signInSelectors) {
-            try {
-              if (selector.startsWith('text=')) {
-                const text = selector.replace('text=', '');
-                const elements = await page.$x(`//*[contains(text(), '${text}')]`);
-                if (elements.length > 0) {
-                  await elements[0].click();
-                  console.log(`Clicked sign in text: "${text}"`);
-                  signInClicked = true;
-                  break;
-                }
-              } else {
+          
+          // If not on Google login page, try to navigate there
+          if (!isOnGoogleLogin) {
+            console.log('Not on Google login page, trying to click sign in...');
+            
+            const signInSelectors = [
+              'a[href*="accounts.google.com"]',
+              '[aria-label*="Sign in"]',
+              '[data-action="signin"]',
+              'button[data-action="signin"]'
+            ];
+            
+            // First try regular CSS selectors
+            for (const selector of signInSelectors) {
+              try {
                 const element = await page.$(selector);
                 if (element) {
-                  await element.click();
-                  console.log(`Clicked sign in element: ${selector}`);
-                  signInClicked = true;
-                  break;
+                  // Check if element is still attached
+                  const isAttached = await element.evaluate(el => el.isConnected);
+                  if (isAttached) {
+                    await element.click();
+                    console.log(`Clicked sign in element: ${selector}`);
+                    signInClicked = true;
+                    break;
+                  } else {
+                    console.log(`Element detached: ${selector}`);
+                  }
                 }
+              } catch (e) {
+                console.log(`Sign in selector failed: ${selector} - ${e.message}`);
               }
-            } catch (e) {
-              console.log(`Sign in selector failed: ${selector} - ${e.message}`);
             }
+            
+            // Try text-based search as fallback
+            if (!signInClicked) {
+              try {
+                const signInTexts = ['Sign in', 'Sign In', 'SIGN IN', 'Login', 'LOG IN'];
+                for (const text of signInTexts) {
+                  const elements = await page.$x(`//*[contains(text(), '${text}')]`);
+                  if (elements.length > 0) {
+                    for (const element of elements) {
+                      try {
+                        const isVisible = await element.evaluate(el => {
+                          const rect = el.getBoundingClientRect();
+                          return rect.width > 0 && rect.height > 0;
+                        });
+                        if (isVisible) {
+                          await element.click();
+                          console.log(`Clicked sign in text: "${text}"`);
+                          signInClicked = true;
+                          break;
+                        }
+                      } catch (e) {
+                        continue;
+                      }
+                    }
+                    if (signInClicked) break;
+                  }
+                }
+              } catch (e) {
+                console.log(`Text-based sign in search failed: ${e.message}`);
+              }
+            }
+            
+            if (signInClicked) {
+              // Wait for navigation to login page
+              console.log('Waiting for navigation to Google login page...');
+              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+            }
+          } else {
+            console.log('Already on Google login page');
           }
           
-          if (signInClicked) {
-            // Wait for navigation or popup
-            console.log('Waiting for authentication page to load...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            
-            // Take screenshot after click
-            const afterClickScreenshot = path.join(recordingDir, 'auth_after_click_screenshot.png');
-            await page.screenshot({ path: afterClickScreenshot, fullPage: true });
-            console.log(`After click screenshot saved: ${afterClickScreenshot}`);
-          }
+          // Take screenshot after any navigation
+          console.log('Taking screenshot after potential navigation...');
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const afterClickScreenshot = path.join(recordingDir, 'auth_after_navigation_screenshot.png');
+          await page.screenshot({ path: afterClickScreenshot, fullPage: true });
+          console.log(`After navigation screenshot saved: ${afterClickScreenshot}`);
           
           // Try multiple selectors for email field with longer timeout
           const emailSelectors = [
