@@ -90,10 +90,10 @@ async function recordMeeting(recordingId, meetUrl, options) {
     // Try to find and click join button
     const joinSelectors = [
       'button[jsname="Qx7uuf"]',           // Original selector
-      '[aria-label*="Join"]',              // Join by aria-label
-      'button:has-text("Join now")',       // Text-based
+      '[aria-label*="Join"]',              // Join by aria-label  
       '[data-tooltip*="Join"]',            // Tooltip-based
-      'button[data-promo-anchor-id="join"]' // Data attribute
+      'button[data-promo-anchor-id="join"]', // Data attribute
+      'div[role="button"][aria-label*="Join"]' // Alternative join button
     ];
     
     console.log('Looking for join button...');
@@ -113,8 +113,29 @@ async function recordMeeting(recordingId, meetUrl, options) {
       }
     }
     
+    // Try text-based approach as fallback
+    if (!joinSuccessful) {
+      try {
+        const buttons = await page.$$('button, div[role="button"]');
+        for (const button of buttons) {
+          const text = await button.evaluate(el => el.textContent?.toLowerCase() || '');
+          const ariaLabel = await button.evaluate(el => el.getAttribute('aria-label')?.toLowerCase() || '');
+          
+          if (text.includes('join') || ariaLabel.includes('join')) {
+            await button.click();
+            console.log(`Join button clicked via text search: "${text}" / "${ariaLabel}"`);
+            joinSuccessful = true;
+            break;
+          }
+        }
+      } catch (e) {
+        console.log('Text-based join search failed:', e.message);
+      }
+    }
+    
     if (!joinSuccessful) {
       console.log('No join button found, may already be in meeting or different UI');
+      // Continue anyway - might already be joined or have different UI
     }
     
     await new Promise(resolve => setTimeout(resolve, 5000));
@@ -122,7 +143,7 @@ async function recordMeeting(recordingId, meetUrl, options) {
     updateMetadata(recordingDir, { 
       status: 'recording',
       joinedAt: new Date().toISOString(),
-      browserPid: browser._process.pid
+      browserPid: browser.process()?.pid || 'unknown'
     });
     
     // Start audio recording
