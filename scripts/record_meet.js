@@ -105,29 +105,87 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
         });
         
         try {
+          // Take screenshot before authentication
+          const authScreenshot = path.join(recordingDir, 'auth_before_screenshot.png');
+          await page.screenshot({ path: authScreenshot, fullPage: true });
+          console.log(`Auth screenshot saved: ${authScreenshot}`);
+          
           // Try to click "Sign in" or similar link if present
           const signInSelectors = [
             'a[href*="accounts.google.com"]',
             'button:contains("Sign in")',
-            '[aria-label*="Sign in"]'
+            '[aria-label*="Sign in"]',
+            'text=Sign in'
           ];
           
+          let signInClicked = false;
           for (const selector of signInSelectors) {
             try {
-              const element = await page.$(selector);
-              if (element) {
-                await element.click();
-                console.log(`Clicked sign in element: ${selector}`);
-                break;
+              if (selector.startsWith('text=')) {
+                const text = selector.replace('text=', '');
+                const elements = await page.$x(`//*[contains(text(), '${text}')]`);
+                if (elements.length > 0) {
+                  await elements[0].click();
+                  console.log(`Clicked sign in text: "${text}"`);
+                  signInClicked = true;
+                  break;
+                }
+              } else {
+                const element = await page.$(selector);
+                if (element) {
+                  await element.click();
+                  console.log(`Clicked sign in element: ${selector}`);
+                  signInClicked = true;
+                  break;
+                }
               }
             } catch (e) {
-              // Continue to next selector
+              console.log(`Sign in selector failed: ${selector} - ${e.message}`);
             }
           }
           
-          // Wait for email field and enter email
-          await page.waitForSelector('input[type="email"], #identifierId', { timeout: 15000 });
-          const emailField = await page.$('input[type="email"], #identifierId');
+          if (signInClicked) {
+            // Wait for navigation or popup
+            console.log('Waiting for authentication page to load...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Take screenshot after click
+            const afterClickScreenshot = path.join(recordingDir, 'auth_after_click_screenshot.png');
+            await page.screenshot({ path: afterClickScreenshot, fullPage: true });
+            console.log(`After click screenshot saved: ${afterClickScreenshot}`);
+          }
+          
+          // Try multiple selectors for email field with longer timeout
+          const emailSelectors = [
+            'input[type="email"]',
+            '#identifierId',
+            'input[name="identifier"]',
+            'input[autocomplete="username"]',
+            '#Email'
+          ];
+          
+          let emailField = null;
+          for (const selector of emailSelectors) {
+            try {
+              console.log(`Looking for email field: ${selector}`);
+              emailField = await page.waitForSelector(selector, { timeout: 5000 });
+              if (emailField) {
+                console.log(`Found email field: ${selector}`);
+                break;
+              }
+            } catch (e) {
+              console.log(`Email selector failed: ${selector}`);
+            }
+          }
+          
+          if (!emailField) {
+            // Take failure screenshot
+            const failScreenshot = path.join(recordingDir, 'auth_email_field_not_found.png');
+            await page.screenshot({ path: failScreenshot, fullPage: true });
+            console.log(`Email field not found screenshot saved: ${failScreenshot}`);
+            throw new Error('Could not find email input field after clicking sign in');
+          }
+          
           await emailField.click();
           await emailField.type(googleAuth.email);
           
