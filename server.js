@@ -42,12 +42,17 @@ app.post('/api/test', (req, res) => {
 // Start recording endpoint
 app.post('/api/record', async (req, res) => {
   try {
-    const { meetUrl, options = {}, googleAuth = {} } = req.body;
+    const { meetUrl, options = {}, googleAuth = {}, email, password } = req.body;
+    
+    // Support both new flat structure and old nested structure
+    const authConfig = email && password ? { email, password } : googleAuth;
     
     // Debug logging (excluding sensitive data)
     console.log('Received request body:', JSON.stringify({
-      ...req.body,
-      googleAuth: googleAuth.email ? { email: googleAuth.email, hasPassword: !!googleAuth.password } : {}
+      meetUrl,
+      email: authConfig.email || 'not provided',
+      hasPassword: !!authConfig.password,
+      options
     }));
     console.log('meetUrl:', meetUrl);
     
@@ -85,10 +90,10 @@ app.post('/api/record', async (req, res) => {
         quality: options.quality || '320k',
         maxDuration: options.maxDuration || 14400
       },
-      authentication: googleAuth.email ? {
+      authentication: authConfig.email ? {
         method: 'google',
-        email: googleAuth.email,
-        hasCredentials: !!googleAuth.password
+        email: authConfig.email,
+        hasCredentials: !!authConfig.password
       } : { method: 'anonymous' },
       recordingDir
     };
@@ -99,7 +104,7 @@ app.post('/api/record', async (req, res) => {
     res.setTimeout(120000); // 2 minute timeout for initialization
     
     try {
-      const result = await startRecordingAndWait(recordingId, meetUrl, options, googleAuth);
+      const result = await startRecordingAndWait(recordingId, meetUrl, options, authConfig);
       
       res.json({
         success: true,

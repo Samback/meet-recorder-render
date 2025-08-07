@@ -61,16 +61,14 @@ curl -X POST http://localhost:3000/api/record \
   -H "Content-Type: application/json" \
   -d '{"meetUrl": "https://meet.google.com/xxx-xxxx-xxx", "options": {"audioFormat": "mp3"}}'
 
-# Start recording (with Google account)
+# Start recording (with Google account) - NEW SIMPLIFIED FORMAT
 curl -X POST http://localhost:3000/api/record \
   -H "Content-Type: application/json" \
   -d '{
-    "meetUrl": "https://meet.google.com/xxx-xxxx-xxx", 
-    "options": {"audioFormat": "mp3"},
-    "googleAuth": {
-      "email": "your-email@gmail.com",
-      "password": "your-password"
-    }
+    "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
+    "email": "your-email@gmail.com",
+    "password": "your-password",
+    "options": {"audioFormat": "mp3"}
   }'
 
 # Check status
@@ -94,7 +92,16 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 - **Appear as real participant** - Shows account name instead of "Guest"
 - **Access corporate meetings** - Required for many business/educational meetings
 
-**Request format with Google auth:**
+**Request format with Google auth (SIMPLIFIED):**
+```json
+{
+  "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
+  "email": "recorder@example.com", 
+  "password": "your-password"
+}
+```
+
+**Legacy format (still supported):**
 ```json
 {
   "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
