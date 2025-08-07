@@ -4,7 +4,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 async function recordMeeting(recordingId, meetUrl, options) {
-  const recordingDir = `/tmp/recordings/${recordingId}`;
+  const RECORDINGS_DIR = process.env.RECORDINGS_DIR || '/tmp/recordings';
+  const recordingDir = `${RECORDINGS_DIR}/${recordingId}`;
   let browser, ffmpegProcess;
   
   try {

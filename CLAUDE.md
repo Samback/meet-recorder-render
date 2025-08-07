@@ -135,3 +135,22 @@ docker run -p 3000:3000 meet-recorder
 - **Missing package-lock.json**: Run `npm install` locally and commit the lock file
 - **Node version mismatch**: Dockerfile uses Node 18, ensure compatibility
 - **FFmpeg/Chrome dependencies**: Already included in Dockerfile system packages
+
+### 502 Bad Gateway Error
+If you see 502 errors on Render.com:
+
+1. **Check deployment logs** in Render dashboard for specific errors
+2. **Directory permissions**: Fixed in latest version with proper Docker user setup
+3. **Health check failure**: Service must respond to `/health` endpoint within 60 seconds
+4. **Startup timeout**: Container must start within Render's timeout limits
+
+**Quick fixes:**
+```bash
+# Test locally first
+docker build -t meet-recorder .
+docker run -p 3000:3000 meet-recorder
+curl http://localhost:3000/health
+
+# If working locally, redeploy on Render
+git push origin main
+```

@@ -8,6 +8,9 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Determine recordings directory (fallback for different environments)
+const RECORDINGS_DIR = process.env.RECORDINGS_DIR || '/tmp/recordings';
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -37,7 +40,7 @@ app.post('/api/record', async (req, res) => {
     }
     
     const recordingId = `rec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const recordingDir = `/tmp/recordings/${recordingId}`;
+    const recordingDir = `${RECORDINGS_DIR}/${recordingId}`;
     
     // Create recording directory
     if (!fs.existsSync(recordingDir)) {
@@ -108,7 +111,7 @@ app.get('/api/status/:recordingId', (req, res) => {
 app.get('/api/download/:recordingId/:format?', (req, res) => {
   try {
     const { recordingId, format = 'mp3' } = req.params;
-    const recordingDir = `/tmp/recordings/${recordingId}`;
+    const recordingDir = `${RECORDINGS_DIR}/${recordingId}`;
     
     if (!fs.existsSync(recordingDir)) {
       return res.status(404).json({ error: 'Recording not found' });
@@ -203,13 +206,12 @@ cron.schedule('0 2 * * *', () => {
 });
 
 function cleanupOldRecordings() {
-  const recordingsDir = '/tmp/recordings';
-  if (!fs.existsSync(recordingsDir)) return;
+  if (!fs.existsSync(RECORDINGS_DIR)) return;
   
   const cutoffTime = Date.now() - (7 * 24 * 60 * 60 * 1000); // 7 days
   
-  fs.readdirSync(recordingsDir).forEach(dir => {
-    const dirPath = path.join(recordingsDir, dir);
+  fs.readdirSync(RECORDINGS_DIR).forEach(dir => {
+    const dirPath = path.join(RECORDINGS_DIR, dir);
     const stat = fs.statSync(dirPath);
     
     if (stat.mtime.getTime() < cutoffTime) {
@@ -224,7 +226,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎥 Google Meet Recording Service running on port ${PORT}`);
   
   // Ensure recordings directory exists
-  if (!fs.existsSync('/tmp/recordings')) {
-    fs.mkdirSync('/tmp/recordings', { recursive: true });
+  if (!fs.existsSync(RECORDINGS_DIR)) {
+    fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+    console.log(`Created recordings directory: ${RECORDINGS_DIR}`);
   }
 });
