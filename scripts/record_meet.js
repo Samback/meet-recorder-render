@@ -60,40 +60,64 @@ async function recordMeeting(recordingId, meetUrl, options) {
     await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
     console.log('Page loaded successfully');
     
-    // Join meeting logic
+    // Join meeting logic - try multiple selector approaches
     console.log('Waiting for meeting interface...');
-    try {
-      await page.waitForSelector('[jsname="BOHaEe"], [data-is-muted]', { timeout: 30000 });
-      console.log('Meeting interface detected');
-    } catch (e) {
-      console.log('Meeting interface not found, trying alternative approach');
-      // Continue anyway as meeting might have different layout
-    }
     
-    // Disable camera
-    try {
-      const cameraButton = await page.$('[jsname="BOHaEe"]');
-      if (cameraButton) {
-        await cameraButton.click();
-        console.log('Camera disabled');
-      } else {
-        console.log('Camera button not found');
+    // Wait for page to load completely
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // Try to find and disable camera
+    const cameraSelectors = [
+      '[data-is-muted="false"]', // Camera toggle
+      '[aria-label*="camera"]',   // Camera button by aria-label
+      'button[jsname="BOHaEe"]',  // Original selector
+      '[data-tooltip*="camera"]'  // Tooltip-based selector
+    ];
+    
+    for (const selector of cameraSelectors) {
+      try {
+        const cameraButton = await page.$(selector);
+        if (cameraButton) {
+          await cameraButton.click();
+          console.log(`Camera disabled using selector: ${selector}`);
+          break;
+        }
+      } catch (e) {
+        console.log(`Camera selector ${selector} failed:`, e.message);
       }
-    } catch (e) {
-      console.log('Could not disable camera:', e.message);
     }
     
-    // Join button
-    try {
-      console.log('Looking for join button...');
-      const joinButton = await page.waitForSelector('[jsname="Qx7uuf"]', { timeout: 15000 });
-      await joinButton.click();
-      console.log('Join button clicked');
-    } catch (e) {
-      console.log('Join button not found or already joined:', e.message);
+    // Try to find and click join button
+    const joinSelectors = [
+      'button[jsname="Qx7uuf"]',           // Original selector
+      '[aria-label*="Join"]',              // Join by aria-label
+      'button:has-text("Join now")',       // Text-based
+      '[data-tooltip*="Join"]',            // Tooltip-based
+      'button[data-promo-anchor-id="join"]' // Data attribute
+    ];
+    
+    console.log('Looking for join button...');
+    let joinSuccessful = false;
+    
+    for (const selector of joinSelectors) {
+      try {
+        const joinButton = await page.$(selector);
+        if (joinButton) {
+          await joinButton.click();
+          console.log(`Join button clicked using selector: ${selector}`);
+          joinSuccessful = true;
+          break;
+        }
+      } catch (e) {
+        console.log(`Join selector ${selector} failed:`, e.message);
+      }
     }
     
-    await page.waitForTimeout(5000);
+    if (!joinSuccessful) {
+      console.log('No join button found, may already be in meeting or different UI');
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 5000));
     
     updateMetadata(recordingDir, { 
       status: 'recording',
@@ -142,20 +166,36 @@ async function recordMeeting(recordingId, meetUrl, options) {
         return;
       }
       
-      // Check if page is still active (simplified check)
+      // Check if meeting is still active using multiple approaches
       try {
-        const meetingElements = await page.$$('[jsname="CQylAd"]');
-        if (meetingElements.length === 0) {
+        const meetingIndicators = [
+          '[jsname="CQylAd"]',           // Original selector
+          '[data-meeting-title]',        // Meeting title
+          '[aria-label*="participants"]', // Participants indicator
+          '.google-meet-video-container', // Video container
+          '[data-allocation-index]'       // Video tiles
+        ];
+        
+        let meetingActive = false;
+        for (const selector of meetingIndicators) {
+          const elements = await page.$$(selector);
+          if (elements.length > 0) {
+            meetingActive = true;
+            break;
+          }
+        }
+        
+        if (!meetingActive) {
           console.log('Meeting ended, stopping...');
           clearInterval(monitorInterval);
           await stopRecording();
           return;
+        } else {
+          console.log(`Recording active, elapsed: ${elapsed}s`);
         }
       } catch (e) {
-        console.log('Error checking meeting status, stopping...');
-        clearInterval(monitorInterval);
-        await stopRecording();
-        return;
+        console.log('Error checking meeting status:', e.message);
+        // Don't stop on single check error, continue monitoring
       }
     }, 30000); // Check every 30 seconds
     
