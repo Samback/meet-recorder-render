@@ -131,6 +131,95 @@ app.get('/api/status/:recordingId', (req, res) => {
   }
 });
 
+// Debug dashboard - list all recording sessions
+app.get('/debug', (req, res) => {
+  try {
+    if (!fs.existsSync(RECORDINGS_DIR)) {
+      return res.send('<h1>No recordings directory found</h1>');
+    }
+    
+    const recordings = fs.readdirSync(RECORDINGS_DIR)
+      .map(recordingId => {
+        const recordingDir = path.join(RECORDINGS_DIR, recordingId);
+        const files = fs.readdirSync(recordingDir).filter(file => 
+          file.endsWith('.png') || file.endsWith('.html') || file.endsWith('.log') || file.endsWith('.json')
+        );
+        
+        const metadata = fs.existsSync(path.join(recordingDir, 'metadata.json')) 
+          ? JSON.parse(fs.readFileSync(path.join(recordingDir, 'metadata.json'), 'utf8'))
+          : {};
+        
+        return {
+          recordingId,
+          files,
+          metadata,
+          createdTime: fs.statSync(recordingDir).mtime
+        };
+      })
+      .sort((a, b) => b.createdTime - a.createdTime);
+    
+    const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Recording Debug Dashboard</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .recording { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .recording h3 { margin-top: 0; color: #333; }
+        .metadata { background: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .files { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .file-link { padding: 8px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; font-size: 12px; }
+        .file-link:hover { background: #0056b3; }
+        .file-link.screenshot { background: #28a745; }
+        .file-link.log { background: #fd7e14; }
+        .file-link.html { background: #6f42c1; }
+        .file-link.json { background: #17a2b8; }
+        .status { padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: bold; }
+        .status.completed { background: #d4edda; color: #155724; }
+        .status.failed { background: #f8d7da; color: #721c24; }
+        .status.recording { background: #d1ecf1; color: #0c5460; }
+        h1 { color: #333; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>🎥 Recording Debug Dashboard</h1>
+        <p><strong>Total Sessions:</strong> ${recordings.length}</p>
+        
+        ${recordings.map(recording => `
+          <div class="recording">
+            <h3>📁 ${recording.recordingId}</h3>
+            <div class="metadata">
+              <p><strong>Status:</strong> <span class="status ${recording.metadata.status || 'unknown'}">${recording.metadata.status || 'Unknown'}</span></p>
+              <p><strong>Started:</strong> ${recording.metadata.startTime || 'Unknown'}</p>
+              <p><strong>Meet URL:</strong> ${recording.metadata.meetUrl || 'Unknown'}</p>
+              ${recording.metadata.error ? `<p><strong>Error:</strong> <code>${recording.metadata.error}</code></p>` : ''}
+            </div>
+            
+            <div class="files">
+              ${recording.files.map(file => {
+                const fileType = file.endsWith('.png') ? 'screenshot' : 
+                                file.endsWith('.log') ? 'log' : 
+                                file.endsWith('.html') ? 'html' : 'json';
+                return `<a href="/api/debug/${recording.recordingId}/${file}" class="file-link ${fileType}" target="_blank">${file}</a>`;
+              }).join('')}
+            </div>
+          </div>
+        `).join('')}
+        
+        ${recordings.length === 0 ? '<p style="text-align: center; color: #666;">No recording sessions found.</p>' : ''}
+      </div>
+    </body>
+    </html>`;
+    
+    res.send(html);
+  } catch (error) {
+    res.status(500).send(`<h1>Error loading debug dashboard</h1><p>${error.message}</p>`);
+  }
+});
+
 // Debug endpoint - get screenshot or HTML content
 app.get('/api/debug/:recordingId/:file?', (req, res) => {
   try {

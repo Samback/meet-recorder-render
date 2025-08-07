@@ -80,6 +80,33 @@ If you see "Could not find Chrome" errors:
 - Chrome installed via Dockerfile at `/usr/bin/google-chrome-stable`
 - Puppeteer configured to use system Chrome instead of bundled version
 
+## Debug Dashboard
+
+Access the comprehensive debug dashboard at:
+```
+https://your-app.onrender.com/debug
+```
+
+**Features:**
+- **Session Overview**: List all recording sessions with metadata
+- **Screenshots**: View UI screenshots when join button not found
+- **Logs**: Access process logs, error logs, and FFmpeg logs
+- **HTML Content**: View saved page content for UI analysis
+- **Status Tracking**: See recording status and error details
+
+**Individual File Access:**
+```
+https://your-app.onrender.com/api/debug/RECORDING_ID/FILENAME
+```
+
+**Common Debug Files:**
+- `debug_screenshot.png` - UI screenshot
+- `page_content.html` - HTML page content
+- `process.log` - Main process output
+- `error.log` - Error messages
+- `ffmpeg.log` - Audio recording logs
+- `metadata.json` - Recording metadata
+
 ## Key File Locations
 
 - **Main Server**: `server.js`
