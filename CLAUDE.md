@@ -51,6 +51,11 @@ curl http://localhost:3000/health
 
 ### Testing API Endpoints
 ```bash
+# Test endpoint (for debugging)
+curl -X POST http://localhost:3000/api/test \
+  -H "Content-Type: application/json" \
+  -d '{"test": "data"}'
+
 # Start recording
 curl -X POST http://localhost:3000/api/record \
   -H "Content-Type: application/json" \
@@ -62,6 +67,12 @@ curl http://localhost:3000/api/status/RECORDING_ID
 # Download recording
 curl http://localhost:3000/api/download/RECORDING_ID/mp3
 ```
+
+### Common 400 Bad Request Issues
+- **Missing meetUrl**: Ensure request body includes `"meetUrl"` field
+- **Invalid meetUrl**: Must contain `"meet.google.com"`
+- **Missing Content-Type**: Must include `"Content-Type: application/json"` header
+- **Malformed JSON**: Check request body JSON syntax
 
 ## Key File Locations
 

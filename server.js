@@ -29,14 +29,38 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Test endpoint to debug requests
+app.post('/api/test', (req, res) => {
+  res.json({
+    message: 'Test endpoint working',
+    receivedBody: req.body,
+    headers: req.headers,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Start recording endpoint
 app.post('/api/record', async (req, res) => {
   try {
     const { meetUrl, options = {} } = req.body;
     
+    // Debug logging
+    console.log('Received request body:', JSON.stringify(req.body));
+    console.log('meetUrl:', meetUrl);
+    
     // Validate input
-    if (!meetUrl || !meetUrl.includes('meet.google.com')) {
-      return res.status(400).json({ error: 'Valid Google Meet URL required' });
+    if (!meetUrl) {
+      return res.status(400).json({ 
+        error: 'meetUrl is required',
+        received: req.body 
+      });
+    }
+    
+    if (!meetUrl.includes('meet.google.com')) {
+      return res.status(400).json({ 
+        error: 'Valid Google Meet URL required (must contain meet.google.com)',
+        received: meetUrl 
+      });
     }
     
     const recordingId = `rec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
