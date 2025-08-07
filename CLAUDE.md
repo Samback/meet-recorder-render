@@ -74,6 +74,12 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 - **Missing Content-Type**: Must include `"Content-Type: application/json"` header
 - **Malformed JSON**: Check request body JSON syntax
 
+### Chrome/Puppeteer Issues
+If you see "Could not find Chrome" errors:
+- Fixed in latest version with explicit Chrome path
+- Chrome installed via Dockerfile at `/usr/bin/google-chrome-stable`
+- Puppeteer configured to use system Chrome instead of bundled version
+
 ## Key File Locations
 
 - **Main Server**: `server.js`

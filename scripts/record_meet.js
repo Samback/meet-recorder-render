@@ -17,6 +17,7 @@ async function recordMeeting(recordingId, meetUrl, options) {
     // Launch browser
     browser = await puppeteer.launch({
       headless: 'new', // Use new headless mode for Docker
+      executablePath: '/usr/bin/google-chrome-stable', // Explicit Chrome path for Docker
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
