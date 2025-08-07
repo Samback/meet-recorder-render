@@ -62,15 +62,15 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
     
     // Handle Google authentication if credentials provided and login is required
     if (googleAuth.email && googleAuth.password) {
-      console.log(`Checking if Google authentication is needed...`);
+      console.log(`Checking if Google authentication is needed for: ${googleAuth.email}`);
       
       // Look for login indicators
       const loginIndicators = [
         'input[type="email"]',
         '#identifierId',
         'a[href*="accounts.google.com"]',
-        'text=Sign in',
-        'text=Use another account'
+        "text=Sign in",
+        "text=Use another account"
       ];
       
       let needsLogin = false;
@@ -184,10 +184,10 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
     
     // Check for meeting access restrictions
     const accessDeniedSelectors = [
-      'text=You can\\'t join this video call',
-      'text=Your meeting is safe',
-      'text=No one can join a meeting unless invited',
-      '[aria-label*="can\\'t join"]'
+      "text=You can't join this video call",
+      "text=Your meeting is safe",
+      "text=No one can join a meeting unless invited",
+      "[aria-label*=\"can't join\"]"
     ];
     
     let accessDenied = false;
