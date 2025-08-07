@@ -42,10 +42,13 @@ app.post('/api/test', (req, res) => {
 // Start recording endpoint
 app.post('/api/record', async (req, res) => {
   try {
-    const { meetUrl, options = {} } = req.body;
+    const { meetUrl, options = {}, googleAuth = {} } = req.body;
     
-    // Debug logging
-    console.log('Received request body:', JSON.stringify(req.body));
+    // Debug logging (excluding sensitive data)
+    console.log('Received request body:', JSON.stringify({
+      ...req.body,
+      googleAuth: googleAuth.email ? { email: googleAuth.email, hasPassword: !!googleAuth.password } : {}
+    }));
     console.log('meetUrl:', meetUrl);
     
     // Validate input
@@ -82,13 +85,18 @@ app.post('/api/record', async (req, res) => {
         quality: options.quality || '320k',
         maxDuration: options.maxDuration || 14400
       },
+      authentication: googleAuth.email ? {
+        method: 'google',
+        email: googleAuth.email,
+        hasCredentials: !!googleAuth.password
+      } : { method: 'anonymous' },
       recordingDir
     };
     
     fs.writeFileSync(`${recordingDir}/metadata.json`, JSON.stringify(metadata, null, 2));
     
     // Start recording process
-    const recordingProcess = startRecording(recordingId, meetUrl, options);
+    const recordingProcess = startRecording(recordingId, meetUrl, options, googleAuth);
     activeRecordings.set(recordingId, recordingProcess);
     
     // Return immediate response
@@ -182,6 +190,9 @@ app.get('/debug', (req, res) => {
         .status.recording { background: #d1ecf1; color: #0c5460; }
         .status.access_denied { background: #fff3cd; color: #856404; }
         .status.access_granted { background: #d4edda; color: #155724; }
+        .status.authenticating { background: #e2e3e5; color: #495057; }
+        .status.authenticated { background: #d4edda; color: #155724; }
+        .status.auth_failed { background: #f8d7da; color: #721c24; }
         h1 { color: #333; text-align: center; }
       </style>
     </head>
@@ -197,6 +208,7 @@ app.get('/debug', (req, res) => {
               <p><strong>Status:</strong> <span class="status ${recording.metadata.status || 'unknown'}">${recording.metadata.status || 'Unknown'}</span></p>
               <p><strong>Started:</strong> ${recording.metadata.startTime || 'Unknown'}</p>
               <p><strong>Meet URL:</strong> ${recording.metadata.meetUrl || 'Unknown'}</p>
+              <p><strong>Auth Method:</strong> ${recording.metadata.authentication?.method || 'Unknown'} ${recording.metadata.authentication?.email ? `(${recording.metadata.authentication.email})` : ''}</p>
               ${recording.metadata.error ? `<p><strong>Error:</strong> <code>${recording.metadata.error}</code></p>` : ''}
             </div>
             
@@ -314,11 +326,11 @@ app.post('/api/stop/:recordingId', (req, res) => {
 });
 
 // Start recording function
-function startRecording(recordingId, meetUrl, options) {
+function startRecording(recordingId, meetUrl, options, googleAuth = {}) {
   const recordingDir = `/tmp/recordings/${recordingId}`;
   
   // Spawn recording process
-  const process = spawn('node', ['scripts/record_meet.js', recordingId, meetUrl, JSON.stringify(options)], {
+  const process = spawn('node', ['scripts/record_meet.js', recordingId, meetUrl, JSON.stringify(options), JSON.stringify(googleAuth)], {
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe']
   });

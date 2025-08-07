@@ -56,10 +56,22 @@ curl -X POST http://localhost:3000/api/test \
   -H "Content-Type: application/json" \
   -d '{"test": "data"}'
 
-# Start recording
+# Start recording (anonymous)
 curl -X POST http://localhost:3000/api/record \
   -H "Content-Type: application/json" \
   -d '{"meetUrl": "https://meet.google.com/xxx-xxxx-xxx", "options": {"audioFormat": "mp3"}}'
+
+# Start recording (with Google account)
+curl -X POST http://localhost:3000/api/record \
+  -H "Content-Type: application/json" \
+  -d '{
+    "meetUrl": "https://meet.google.com/xxx-xxxx-xxx", 
+    "options": {"audioFormat": "mp3"},
+    "googleAuth": {
+      "email": "your-email@gmail.com",
+      "password": "your-password"
+    }
+  }'
 
 # Check status
 curl http://localhost:3000/api/status/RECORDING_ID
@@ -73,6 +85,36 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 - **Invalid meetUrl**: Must contain `"meet.google.com"`
 - **Missing Content-Type**: Must include `"Content-Type: application/json"` header
 - **Malformed JSON**: Check request body JSON syntax
+
+### Google Account Authentication
+
+**Why use Google authentication?**
+- **Bypass anonymous restrictions** - Many meetings don't allow guest users
+- **Enable invitations** - Host can invite the specific Google account
+- **Appear as real participant** - Shows account name instead of "Guest"
+- **Access corporate meetings** - Required for many business/educational meetings
+
+**Request format with Google auth:**
+```json
+{
+  "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
+  "googleAuth": {
+    "email": "recorder@example.com", 
+    "password": "your-password"
+  }
+}
+```
+
+**Authentication flow:**
+1. Logs into Google account before joining meeting
+2. Navigates to Google Meet as authenticated user
+3. Joins meeting with account identity
+4. Records as the specified user
+
+**Security notes:**
+- Credentials are not logged or stored permanently
+- Use a dedicated Google account for recording
+- Consider app-specific passwords for enhanced security
 
 ### Chrome/Puppeteer Issues
 If you see "Could not find Chrome" errors:

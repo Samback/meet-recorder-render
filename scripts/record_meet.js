@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-async function recordMeeting(recordingId, meetUrl, options) {
+async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
   const RECORDINGS_DIR = process.env.RECORDINGS_DIR || '/tmp/recordings';
   const recordingDir = `${RECORDINGS_DIR}/${recordingId}`;
   let browser, ffmpegProcess;
@@ -44,6 +44,48 @@ async function recordMeeting(recordingId, meetUrl, options) {
     });
     
     const page = await browser.newPage();
+    
+    // Handle Google authentication if credentials provided
+    if (googleAuth.email && googleAuth.password) {
+      console.log(`Authenticating with Google account: ${googleAuth.email}`);
+      updateMetadata(recordingDir, { 
+        status: 'authenticating',
+        authenticatingWith: googleAuth.email
+      });
+      
+      try {
+        // Navigate to Google login
+        await page.goto('https://accounts.google.com/signin', { waitUntil: 'networkidle2' });
+        
+        // Enter email
+        await page.waitForSelector('input[type="email"]', { timeout: 10000 });
+        await page.type('input[type="email"]', googleAuth.email);
+        await page.click('#identifierNext');
+        
+        // Wait for password field
+        await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+        await page.type('input[type="password"]', googleAuth.password);
+        await page.click('#passwordNext');
+        
+        // Wait for login to complete
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+        
+        console.log('Google authentication completed');
+        updateMetadata(recordingDir, { 
+          status: 'authenticated',
+          authenticatedAt: new Date().toISOString()
+        });
+        
+      } catch (error) {
+        console.error('Google authentication failed:', error.message);
+        updateMetadata(recordingDir, {
+          status: 'auth_failed',
+          error: `Google authentication failed: ${error.message}`,
+          failedAt: new Date().toISOString()
+        });
+        throw new Error(`Authentication failed: ${error.message}`);
+      }
+    }
     
     // Grant permissions
     const context = browser.defaultBrowserContext();
@@ -482,10 +524,11 @@ async function processRecordingFiles(recordingDir, options) {
 
 // Run if called directly
 if (require.main === module) {
-  const [recordingId, meetUrl, optionsStr] = process.argv.slice(2);
+  const [recordingId, meetUrl, optionsStr, googleAuthStr] = process.argv.slice(2);
   const options = JSON.parse(optionsStr || '{}');
+  const googleAuth = JSON.parse(googleAuthStr || '{}');
   
-  recordMeeting(recordingId, meetUrl, options)
+  recordMeeting(recordingId, meetUrl, options, googleAuth)
     .then(() => process.exit(0))
     .catch(error => {
       console.error('Recording failed:', error);
