@@ -16,16 +16,21 @@ async function recordMeeting(recordingId, meetUrl, options) {
     
     // Launch browser
     browser = await puppeteer.launch({
-      headless: false,
+      headless: 'new', // Use new headless mode for Docker
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
         '--use-fake-ui-for-media-stream',
         '--use-fake-device-for-media-stream',
         '--allow-running-insecure-content',
         '--autoplay-policy=no-user-gesture-required',
-        '--disable-background-timer-throttling'
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
       ],
       defaultViewport: { width: 1920, height: 1080 }
     });
@@ -36,28 +41,48 @@ async function recordMeeting(recordingId, meetUrl, options) {
     const context = browser.defaultBrowserContext();
     await context.overridePermissions(meetUrl, ['microphone', 'camera']);
     
-    updateMetadata(recordingDir, { status: 'joining_meeting' });
+    updateMetadata(recordingDir, { 
+      status: 'joining_meeting',
+      browserLaunched: true,
+      targetUrl: meetUrl
+    });
     
     // Navigate to meet
+    console.log(`Navigating to: ${meetUrl}`);
     await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    console.log('Page loaded successfully');
     
     // Join meeting logic
-    await page.waitForSelector('[jsname="BOHaEe"], [data-is-muted]', { timeout: 30000 });
+    console.log('Waiting for meeting interface...');
+    try {
+      await page.waitForSelector('[jsname="BOHaEe"], [data-is-muted]', { timeout: 30000 });
+      console.log('Meeting interface detected');
+    } catch (e) {
+      console.log('Meeting interface not found, trying alternative approach');
+      // Continue anyway as meeting might have different layout
+    }
     
     // Disable camera
     try {
       const cameraButton = await page.$('[jsname="BOHaEe"]');
-      if (cameraButton) await cameraButton.click();
+      if (cameraButton) {
+        await cameraButton.click();
+        console.log('Camera disabled');
+      } else {
+        console.log('Camera button not found');
+      }
     } catch (e) {
-      console.log('Could not disable camera');
+      console.log('Could not disable camera:', e.message);
     }
     
     // Join button
     try {
+      console.log('Looking for join button...');
       const joinButton = await page.waitForSelector('[jsname="Qx7uuf"]', { timeout: 15000 });
       await joinButton.click();
+      console.log('Join button clicked');
     } catch (e) {
-      console.log('Join button not found or already joined');
+      console.log('Join button not found or already joined:', e.message);
     }
     
     await page.waitForTimeout(5000);
