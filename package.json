@@ -1,0 +1,38 @@
+{
+  "name": "meet-recorder-render",
+  "version": "1.0.0",
+  "description": "Google Meet Recording Service for Render.com",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "puppeteer": "^21.0.0",
+    "cors": "^2.8.5",
+    "multer": "^1.4.5",
+    "uuid": "^9.0.0",
+    "node-cron": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "google-meet",
+    "recording",
+    "automation",
+    "puppeteer",
+    "render"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Samback/meet-recorder-render.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Samback/meet-recorder-render/issues"
+  },
+  "homepage": "https://github.com/Samback/meet-recorder-render#readme"
+}

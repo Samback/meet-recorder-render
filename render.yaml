@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: meet-recorder
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+    disk:
+      name: recordings
+      mountPath: /tmp/recordings
+      sizeGB: 1
+
+databases: []
