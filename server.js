@@ -180,6 +180,8 @@ app.get('/debug', (req, res) => {
         .status.completed { background: #d4edda; color: #155724; }
         .status.failed { background: #f8d7da; color: #721c24; }
         .status.recording { background: #d1ecf1; color: #0c5460; }
+        .status.access_denied { background: #fff3cd; color: #856404; }
+        .status.access_granted { background: #d4edda; color: #155724; }
         h1 { color: #333; text-align: center; }
       </style>
     </head>

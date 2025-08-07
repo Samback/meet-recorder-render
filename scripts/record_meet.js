@@ -66,6 +66,88 @@ async function recordMeeting(recordingId, meetUrl, options) {
     // Wait for page to load completely
     await new Promise(resolve => setTimeout(resolve, 3000));
     
+    // Check for meeting access restrictions
+    const accessDeniedSelectors = [
+      'text=You can\\'t join this video call',
+      'text=Your meeting is safe',
+      'text=No one can join a meeting unless invited',
+      '[aria-label*="can\\'t join"]'
+    ];
+    
+    let accessDenied = false;
+    for (const selector of accessDeniedSelectors) {
+      try {
+        if (selector.startsWith('text=')) {
+          const text = selector.replace('text=', '');
+          const elements = await page.$x(`//*[contains(text(), '${text}')]`);
+          if (elements.length > 0) {
+            accessDenied = true;
+            console.log(`Access denied detected: "${text}"`);
+            break;
+          }
+        } else {
+          const element = await page.$(selector);
+          if (element) {
+            accessDenied = true;
+            console.log(`Access denied detected with selector: ${selector}`);
+            break;
+          }
+        }
+      } catch (e) {
+        // Continue checking other selectors
+      }
+    }
+    
+    if (accessDenied) {
+      console.log('Meeting access is restricted - host approval or invitation required');
+      updateMetadata(recordingDir, {
+        status: 'access_denied',
+        error: 'Meeting access restricted - host approval or invitation required',
+        accessDeniedAt: new Date().toISOString()
+      });
+      
+      // Take screenshot of access denied screen
+      const accessDeniedScreenshot = path.join(recordingDir, 'access_denied_screenshot.png');
+      await page.screenshot({ path: accessDeniedScreenshot, fullPage: true });
+      console.log(`Access denied screenshot saved: ${accessDeniedScreenshot}`);
+      
+      // Wait a bit to see if access gets granted
+      console.log('Waiting 30 seconds to see if host grants access...');
+      await new Promise(resolve => setTimeout(resolve, 30000));
+      
+      // Check again if we can now access the meeting
+      let accessGranted = false;
+      for (const selector of accessDeniedSelectors) {
+        try {
+          if (selector.startsWith('text=')) {
+            const text = selector.replace('text=', '');
+            const elements = await page.$x(`//*[contains(text(), '${text}')]`);
+            if (elements.length === 0) {
+              accessGranted = true;
+              break;
+            }
+          }
+        } catch (e) {
+          // Continue
+        }
+      }
+      
+      if (!accessGranted) {
+        console.log('Access still denied after waiting - stopping recording');
+        updateMetadata(recordingDir, {
+          status: 'failed',
+          error: 'Meeting access denied - host did not grant access within 30 seconds'
+        });
+        return; // Exit the function
+      } else {
+        console.log('Access granted! Continuing with meeting join...');
+        updateMetadata(recordingDir, { 
+          status: 'access_granted',
+          accessGrantedAt: new Date().toISOString()
+        });
+      }
+    }
+    
     // Try to find and disable camera
     const cameraSelectors = [
       '[data-is-muted="false"]', // Camera toggle
