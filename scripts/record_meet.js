@@ -31,7 +31,14 @@ async function recordMeeting(recordingId, meetUrl, options) {
         '--autoplay-policy=no-user-gesture-required',
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding'
+        '--disable-renderer-backgrounding',
+        '--disable-crash-reporter',
+        '--disable-extensions',
+        '--disable-logging',
+        '--disable-breakpad',
+        '--user-data-dir=/tmp/chrome-user-data',
+        '--data-path=/tmp/chrome-data',
+        '--homedir=/tmp'
       ],
       defaultViewport: { width: 1920, height: 1080 }
     });

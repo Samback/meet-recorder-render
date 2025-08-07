@@ -22,13 +22,13 @@ RUN npm ci --omit=dev
 # Copy app source
 COPY . .
 
-# Create non-root user first
-RUN groupadd -r recorder && useradd -r -g recorder -G audio recorder
+# Create non-root user with home directory
+RUN groupadd -r recorder && useradd -r -g recorder -G audio -m recorder
 
 # Create directories with proper ownership
-RUN mkdir -p /app/recordings /tmp/recordings \
-    && chown -R recorder:recorder /app /tmp/recordings \
-    && chmod -R 755 /tmp/recordings
+RUN mkdir -p /app/recordings /tmp/recordings /home/recorder/.local/share/applications \
+    && chown -R recorder:recorder /app /tmp/recordings /home/recorder \
+    && chmod -R 755 /tmp/recordings /home/recorder
 
 # Switch to non-root user
 USER recorder
