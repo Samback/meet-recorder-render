@@ -135,6 +135,29 @@ async function recordMeeting(recordingId, meetUrl, options) {
     
     if (!joinSuccessful) {
       console.log('No join button found, may already be in meeting or different UI');
+      
+      // Take screenshot for debugging
+      try {
+        const screenshotPath = path.join(recordingDir, 'debug_screenshot.png');
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        console.log(`Debug screenshot saved: ${screenshotPath}`);
+        
+        // Also log page content for debugging
+        const pageContent = await page.content();
+        fs.writeFileSync(path.join(recordingDir, 'page_content.html'), pageContent);
+        console.log('Page HTML content saved for debugging');
+        
+        updateMetadata(recordingDir, {
+          debugInfo: {
+            screenshotTaken: true,
+            screenshotPath: 'debug_screenshot.png',
+            htmlContentSaved: true
+          }
+        });
+      } catch (e) {
+        console.log('Failed to take debug screenshot:', e.message);
+      }
+      
       // Continue anyway - might already be joined or have different UI
     }
     
@@ -147,7 +170,9 @@ async function recordMeeting(recordingId, meetUrl, options) {
     });
     
     // Start audio recording
+    console.log('Starting audio recording...');
     const audioFile = path.join(recordingDir, `recording.${options.audioFormat || 'mp3'}`);
+    console.log(`Audio file path: ${audioFile}`);
     
     const ffmpegArgs = [
       '-f', 'pulse',
@@ -160,7 +185,21 @@ async function recordMeeting(recordingId, meetUrl, options) {
       audioFile
     ];
     
+    console.log('FFmpeg command:', 'ffmpeg', ffmpegArgs.join(' '));
     ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+    
+    ffmpegProcess.on('spawn', () => {
+      console.log('FFmpeg process started successfully');
+    });
+    
+    ffmpegProcess.on('error', (error) => {
+      console.error('FFmpeg spawn error:', error);
+      updateMetadata(recordingDir, {
+        status: 'failed',
+        error: `FFmpeg failed to start: ${error.message}`,
+        failedAt: new Date().toISOString()
+      });
+    });
     
     ffmpegProcess.stderr.on('data', (data) => {
       fs.appendFileSync(`${recordingDir}/ffmpeg.log`, data);

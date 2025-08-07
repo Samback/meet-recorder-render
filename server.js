@@ -131,6 +131,35 @@ app.get('/api/status/:recordingId', (req, res) => {
   }
 });
 
+// Debug endpoint - get screenshot or HTML content
+app.get('/api/debug/:recordingId/:file?', (req, res) => {
+  try {
+    const { recordingId, file = 'debug_screenshot.png' } = req.params;
+    const recordingDir = `${RECORDINGS_DIR}/${recordingId}`;
+    
+    if (!fs.existsSync(recordingDir)) {
+      return res.status(404).json({ error: 'Recording not found' });
+    }
+    
+    const filePath = path.join(recordingDir, file);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Debug file not found' });
+    }
+    
+    // Set appropriate content type
+    if (file.endsWith('.png')) {
+      res.setHeader('Content-Type', 'image/png');
+    } else if (file.endsWith('.html')) {
+      res.setHeader('Content-Type', 'text/html');
+    }
+    
+    res.sendFile(path.resolve(filePath));
+    
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Download recording
 app.get('/api/download/:recordingId/:format?', (req, res) => {
   try {
