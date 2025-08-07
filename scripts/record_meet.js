@@ -45,48 +45,6 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
     
     const page = await browser.newPage();
     
-    // Handle Google authentication if credentials provided
-    if (googleAuth.email && googleAuth.password) {
-      console.log(`Authenticating with Google account: ${googleAuth.email}`);
-      updateMetadata(recordingDir, { 
-        status: 'authenticating',
-        authenticatingWith: googleAuth.email
-      });
-      
-      try {
-        // Navigate to Google login
-        await page.goto('https://accounts.google.com/signin', { waitUntil: 'networkidle2' });
-        
-        // Enter email
-        await page.waitForSelector('input[type="email"]', { timeout: 10000 });
-        await page.type('input[type="email"]', googleAuth.email);
-        await page.click('#identifierNext');
-        
-        // Wait for password field
-        await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-        await page.type('input[type="password"]', googleAuth.password);
-        await page.click('#passwordNext');
-        
-        // Wait for login to complete
-        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
-        
-        console.log('Google authentication completed');
-        updateMetadata(recordingDir, { 
-          status: 'authenticated',
-          authenticatedAt: new Date().toISOString()
-        });
-        
-      } catch (error) {
-        console.error('Google authentication failed:', error.message);
-        updateMetadata(recordingDir, {
-          status: 'auth_failed',
-          error: `Google authentication failed: ${error.message}`,
-          failedAt: new Date().toISOString()
-        });
-        throw new Error(`Authentication failed: ${error.message}`);
-      }
-    }
-    
     // Grant permissions
     const context = browser.defaultBrowserContext();
     await context.overridePermissions(meetUrl, ['microphone', 'camera']);
@@ -97,10 +55,126 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       targetUrl: meetUrl
     });
     
-    // Navigate to meet
+    // Navigate to meet first
     console.log(`Navigating to: ${meetUrl}`);
     await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
     console.log('Page loaded successfully');
+    
+    // Handle Google authentication if credentials provided and login is required
+    if (googleAuth.email && googleAuth.password) {
+      console.log(`Checking if Google authentication is needed...`);
+      
+      // Look for login indicators
+      const loginIndicators = [
+        'input[type="email"]',
+        '#identifierId',
+        'a[href*="accounts.google.com"]',
+        'text=Sign in',
+        'text=Use another account'
+      ];
+      
+      let needsLogin = false;
+      for (const indicator of loginIndicators) {
+        try {
+          if (indicator.startsWith('text=')) {
+            const text = indicator.replace('text=', '');
+            const elements = await page.$x(`//*[contains(text(), '${text}')]`);
+            if (elements.length > 0) {
+              needsLogin = true;
+              console.log(`Login needed - found: "${text}"`);
+              break;
+            }
+          } else {
+            const element = await page.$(indicator);
+            if (element) {
+              needsLogin = true;
+              console.log(`Login needed - found selector: ${indicator}`);
+              break;
+            }
+          }
+        } catch (e) {
+          // Continue checking
+        }
+      }
+      
+      if (needsLogin) {
+        console.log(`Authenticating with Google account: ${googleAuth.email}`);
+        updateMetadata(recordingDir, { 
+          status: 'authenticating',
+          authenticatingWith: googleAuth.email
+        });
+        
+        try {
+          // Try to click "Sign in" or similar link if present
+          const signInSelectors = [
+            'a[href*="accounts.google.com"]',
+            'button:contains("Sign in")',
+            '[aria-label*="Sign in"]'
+          ];
+          
+          for (const selector of signInSelectors) {
+            try {
+              const element = await page.$(selector);
+              if (element) {
+                await element.click();
+                console.log(`Clicked sign in element: ${selector}`);
+                break;
+              }
+            } catch (e) {
+              // Continue to next selector
+            }
+          }
+          
+          // Wait for email field and enter email
+          await page.waitForSelector('input[type="email"], #identifierId', { timeout: 15000 });
+          const emailField = await page.$('input[type="email"], #identifierId');
+          await emailField.click();
+          await emailField.type(googleAuth.email);
+          
+          // Click next button
+          const nextButton = await page.$('#identifierNext, button[type="submit"]');
+          if (nextButton) {
+            await nextButton.click();
+          }
+          
+          // Wait for password field
+          await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+          const passwordField = await page.$('input[type="password"]');
+          await passwordField.click();
+          await passwordField.type(googleAuth.password);
+          
+          // Click password next button
+          const passwordNext = await page.$('#passwordNext, button[type="submit"]');
+          if (passwordNext) {
+            await passwordNext.click();
+          }
+          
+          // Wait for navigation back to Meet
+          await page.waitForFunction(
+            (url) => window.location.href.includes('meet.google.com'),
+            { timeout: 30000 },
+            meetUrl
+          );
+          
+          console.log('Google authentication completed, back on Meet page');
+          updateMetadata(recordingDir, { 
+            status: 'authenticated',
+            authenticatedAt: new Date().toISOString()
+          });
+          
+        } catch (error) {
+          console.error('Google authentication failed:', error.message);
+          updateMetadata(recordingDir, {
+            status: 'auth_failed',
+            error: `Google authentication failed: ${error.message}`,
+            failedAt: new Date().toISOString()
+          });
+          throw new Error(`Authentication failed: ${error.message}`);
+        }
+      } else {
+        console.log('No login required - already authenticated or anonymous access');
+      }
+    }
     
     // Join meeting logic - try multiple selector approaches
     console.log('Waiting for meeting interface...');

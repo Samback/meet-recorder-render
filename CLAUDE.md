@@ -112,12 +112,14 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 }
 ```
 
-**Authentication flow:**
-1. Logs into Google account before joining meeting
-2. Navigates to Google Meet as authenticated user
-3. Joins meeting with account identity
-4. Starts audio recording
-5. Returns success response only after recording is active
+**Authentication flow (IMPROVED):**
+1. Navigates to Google Meet URL first
+2. Detects if login is required on the Meet page
+3. Handles Google login directly within Meet context
+4. Maintains session within Meet throughout the process
+5. Joins meeting with authenticated account identity
+6. Starts audio recording
+7. Returns success response only after recording is active
 
 **API Response Behavior:**
 - **OLD**: Returned immediately when request received
