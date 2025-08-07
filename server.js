@@ -246,12 +246,44 @@ function cleanupOldRecordings() {
 }
 
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
+console.log('🚀 Starting Google Meet Recording Service...');
+console.log(`📂 Recordings directory: ${RECORDINGS_DIR}`);
+console.log(`🌐 Binding to port: ${PORT}`);
+
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎥 Google Meet Recording Service running on port ${PORT}`);
+  console.log(`✅ Server ready at http://0.0.0.0:${PORT}`);
+  console.log(`📊 Health check: http://0.0.0.0:${PORT}/health`);
   
   // Ensure recordings directory exists
   if (!fs.existsSync(RECORDINGS_DIR)) {
     fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
-    console.log(`Created recordings directory: ${RECORDINGS_DIR}`);
+    console.log(`📁 Created recordings directory: ${RECORDINGS_DIR}`);
+  } else {
+    console.log(`📁 Using existing recordings directory: ${RECORDINGS_DIR}`);
   }
+  
+  console.log('🎬 Service fully initialized and ready for recordings');
+});
+
+server.on('error', (error) => {
+  console.error('❌ Server startup error:', error);
+  process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('📋 Received SIGTERM, shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('📋 Received SIGINT, shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
 });

@@ -33,8 +33,8 @@ RUN mkdir -p /app/recordings /tmp/recordings /home/recorder/.local/share/applica
 # Switch to non-root user
 USER recorder
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Health check with longer startup period
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:${PORT:-3000}/health || exit 1
 
 # Expose port
