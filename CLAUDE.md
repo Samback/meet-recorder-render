@@ -112,14 +112,15 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 }
 ```
 
-**Authentication flow (IMPROVED):**
-1. Navigates to Google Meet URL first
-2. Detects if login is required on the Meet page
-3. Handles Google login directly within Meet context
-4. Maintains session within Meet throughout the process
-5. Joins meeting with authenticated account identity
-6. Starts audio recording
-7. Returns success response only after recording is active
+**Authentication flow (GMAIL-BASED):**
+1. Starts authentication flow at gmail.com (better redirect handling)
+2. Enters email and password credentials
+3. Detects and handles device confirmation prompts (2FA)
+4. Automatically selects "Get notification" or "Confirm on familiar device" 
+5. Waits up to 5 minutes for phone/device confirmation
+6. Navigates to Meet URL with authenticated session
+7. Joins meeting with authenticated account identity
+8. Starts audio recording and returns success response
 
 **API Response Behavior:**
 - **OLD**: Returned immediately when request received
@@ -132,6 +133,15 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 - Credentials are not logged or stored permanently
 - Use a dedicated Google account for recording
 - Consider app-specific passwords for enhanced security
+
+**Device Confirmation & 2FA Support:**
+The system now handles Google's device confirmation workflow:
+1. **Gmail Entry Point**: Uses gmail.com for better authentication flow
+2. **Device Confirmation**: Automatically detects "Confirm it's you" prompts
+3. **Phone Notification**: Clicks "Get notification" for phone confirmation
+4. **Waiting Period**: Waits up to 5 minutes for device confirmation
+5. **Real-time Status**: Provides status updates during confirmation process
+6. **Automatic Fallback**: Falls back to anonymous access if needed
 
 **Account Verification Issues:**
 If you encounter account verification errors (Google requesting name, phone, etc.):

@@ -62,9 +62,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
     if (googleAuth.email && googleAuth.password) {
       console.log(`Starting Google authentication for: ${googleAuth.email}`);
       
-      // First, visit Google accounts page to check authentication status
-      console.log('Checking Google account authentication at accounts.google.com...');
-      await page.goto('https://accounts.google.com/', { waitUntil: 'networkidle2', timeout: 60000 });
+      // First, visit Gmail to trigger authentication flow and handle redirects
+      console.log('Starting authentication flow at gmail.com...');
+      await page.goto('https://gmail.com/', { waitUntil: 'networkidle2', timeout: 60000 });
       
       // Wait for page to stabilize
       await new Promise(resolve => setTimeout(resolve, 3000));
@@ -92,13 +92,14 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
         }
       }
       
-      // Also check if we're on the myaccount page or similar
+      // Also check if we're on Gmail or account management pages
       const currentUrl = page.url();
-      if (currentUrl.includes('myaccount.google.com') || 
+      if (currentUrl.includes('mail.google.com') ||
+          currentUrl.includes('myaccount.google.com') || 
           currentUrl.includes('accounts.google.com/signin/continue') ||
           currentUrl.includes('accounts.google.com/b/0/ManageAccount')) {
         alreadyLoggedIn = true;
-        console.log(`Already logged in - on account management page: ${currentUrl}`);
+        console.log(`Already logged in - on authenticated page: ${currentUrl}`);
       }
       
       if (!alreadyLoggedIn) {
@@ -373,11 +374,182 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
             console.log('Pressed Enter on password field');
           }
           
-          // Wait for successful login - should redirect to myaccount or similar
+          // Wait for authentication response - could be success, 2FA, or device confirmation
+          console.log('Waiting for authentication response...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          
+          const authUrl = page.url();
+          console.log(`Authentication response URL: ${authUrl}`);
+          
+          // Check for device confirmation prompts
+          const deviceConfirmationIndicators = [
+            'text=Confirm it\'s you',
+            'text=2-Step Verification',
+            'text=Choose how to confirm',
+            'text=Get a notification',
+            'text=Confirm on a familiar device',
+            'text=Use your phone',
+            '[aria-label*="confirm"]',
+            '[data-action="selectChallenge"]',
+            'button:has-text("Confirm")',
+            'button:has-text("Get notification")'
+          ];
+          
+          let needsDeviceConfirmation = false;
+          let confirmationMethod = 'unknown';
+          
+          for (const indicator of deviceConfirmationIndicators) {
+            try {
+              if (indicator.startsWith('text=')) {
+                const text = indicator.replace('text=', '');
+                const found = await page.evaluate((searchText) => {
+                  return document.body.textContent.includes(searchText);
+                }, text);
+                if (found) {
+                  needsDeviceConfirmation = true;
+                  confirmationMethod = text;
+                  console.log(`Device confirmation required - found: "${text}"`);
+                  break;
+                }
+              } else {
+                const element = await page.$(indicator);
+                if (element) {
+                  needsDeviceConfirmation = true;
+                  confirmationMethod = indicator;
+                  console.log(`Device confirmation required - found selector: ${indicator}`);
+                  break;
+                }
+              }
+            } catch (e) {
+              // Continue checking
+            }
+          }
+          
+          if (needsDeviceConfirmation) {
+            console.log(`📱 Device confirmation required using: ${confirmationMethod}`);
+            const confirmationScreenshot = path.join(recordingDir, 'device_confirmation_required.png');
+            await page.screenshot({ path: confirmationScreenshot, fullPage: true });
+            
+            updateMetadata(recordingDir, {
+              status: 'device_confirmation_required',
+              confirmationMethod: confirmationMethod,
+              confirmationScreenshot: 'device_confirmation_required.png',
+              waitingForConfirmation: true,
+              confirmationStartedAt: new Date().toISOString()
+            });
+            
+            // Look for and click "Get notification" or similar confirmation method
+            const confirmationSelectors = [
+              'button:has-text("Get notification")',
+              'button:has-text("Confirm")',
+              '[data-action="selectChallenge"]',
+              'div[role="button"]:has-text("notification")',
+              '[aria-label*="notification"]'
+            ];
+            
+            let confirmationClicked = false;
+            for (const selector of confirmationSelectors) {
+              try {
+                const element = await page.$(selector);
+                if (element) {
+                  await element.click();
+                  console.log(`Clicked confirmation method: ${selector}`);
+                  confirmationClicked = true;
+                  break;
+                }
+              } catch (e) {
+                console.log(`Confirmation selector failed: ${selector} - ${e.message}`);
+              }
+            }
+            
+            // If no specific button found, try text-based search
+            if (!confirmationClicked) {
+              try {
+                const clicked = await page.evaluate(() => {
+                  const elements = document.querySelectorAll('button, div[role="button"], a');
+                  for (const el of elements) {
+                    const text = el.textContent?.toLowerCase() || '';
+                    if (text.includes('notification') || text.includes('confirm') || text.includes('familiar device')) {
+                      el.click();
+                      return text;
+                    }
+                  }
+                  return false;
+                });
+                
+                if (clicked) {
+                  console.log(`Clicked confirmation via text search: "${clicked}"`);
+                  confirmationClicked = true;
+                }
+              } catch (e) {
+                console.log('Text-based confirmation search failed:', e.message);
+              }
+            }
+            
+            if (confirmationClicked) {
+              console.log('⏳ Waiting for device confirmation... Please check your phone/device');
+              updateMetadata(recordingDir, {
+                status: 'waiting_for_device_confirmation',
+                message: 'Please confirm the login on your phone or trusted device',
+                waitingStartedAt: new Date().toISOString()
+              });
+              
+              // Wait for confirmation completion (up to 5 minutes)
+              let confirmationComplete = false;
+              const maxWaitTime = 5 * 60 * 1000; // 5 minutes
+              const startWait = Date.now();
+              
+              while (Date.now() - startWait < maxWaitTime && !confirmationComplete) {
+                console.log(`⏳ Still waiting for device confirmation... ${Math.floor((Date.now() - startWait) / 1000)}s elapsed`);
+                await new Promise(resolve => setTimeout(resolve, 10000)); // Check every 10 seconds
+                
+                // Check if we've been redirected to Gmail or authenticated page
+                const currentUrl = page.url();
+                if (currentUrl.includes('mail.google.com') ||
+                    currentUrl.includes('myaccount.google.com') ||
+                    currentUrl.includes('accounts.google.com/signin/continue')) {
+                  confirmationComplete = true;
+                  console.log('✅ Device confirmation completed successfully!');
+                  break;
+                }
+                
+                // Also check for account avatar presence
+                try {
+                  const avatar = await page.$('[data-ogsr-up]');
+                  if (avatar) {
+                    confirmationComplete = true;
+                    console.log('✅ Device confirmation completed - account avatar detected!');
+                    break;
+                  }
+                } catch (e) {
+                  // Continue waiting
+                }
+              }
+              
+              if (!confirmationComplete) {
+                const timeoutScreenshot = path.join(recordingDir, 'device_confirmation_timeout.png');
+                await page.screenshot({ path: timeoutScreenshot, fullPage: true });
+                
+                updateMetadata(recordingDir, {
+                  status: 'device_confirmation_timeout',
+                  error: 'Device confirmation timed out after 5 minutes',
+                  timeoutScreenshot: 'device_confirmation_timeout.png',
+                  timedOutAt: new Date().toISOString()
+                });
+                
+                throw new Error('Device confirmation timed out after 5 minutes. Please try again and confirm quickly on your device.');
+              }
+            } else {
+              console.log('⚠️  Could not find confirmation button, proceeding anyway...');
+            }
+          }
+          
+          // Final check for successful authentication
           await page.waitForFunction(
             () => {
               const url = window.location.href;
-              return url.includes('myaccount.google.com') || 
+              return url.includes('mail.google.com') ||
+                     url.includes('myaccount.google.com') || 
                      url.includes('accounts.google.com/signin/continue') ||
                      url.includes('accounts.google.com/b/0/ManageAccount') ||
                      document.querySelector('[data-ogsr-up]'); // Account avatar present
@@ -385,11 +557,12 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
             { timeout: 30000 }
           );
           
-          console.log('Google authentication completed successfully');
+          console.log('✅ Google authentication completed successfully!');
           authenticationMode = 'authenticated';
           updateMetadata(recordingDir, { 
             status: 'authenticated',
-            authenticatedAt: new Date().toISOString()
+            authenticatedAt: new Date().toISOString(),
+            finalAuthUrl: page.url()
           });
           
         } catch (error) {
