@@ -9,6 +9,35 @@ class MeetAuthenticator {
     this.screenshotCounter = 0;
   }
 
+  // Helper function to check if user is truly authenticated (not just on a sign-in page)
+  isAuthenticated(url) {
+    // First exclude sign-in pages (these take priority)
+    const isSignInPage = url.includes('signin/identifier') || 
+                        url.includes('signin/v2/identifier') ||
+                        url.includes('signin/v3/identifier') ||
+                        url.includes('ServiceLogin') ||
+                        url.includes('accounts.google.com/AccountChooser');
+    
+    if (isSignInPage) {
+      console.log(`🔍 Sign-in page detected, not authenticated: ${url}`);
+      return false;
+    }
+    
+    // Then check for truly authenticated pages
+    const authenticatedPages = url.includes('mail.google.com') ||
+                              url.includes('myaccount.google.com') || 
+                              url.includes('accounts.google.com/signin/continue') ||
+                              url.includes('accounts.google.com/b/0/ManageAccount');
+    
+    if (authenticatedPages) {
+      console.log(`✅ Authenticated page detected: ${url}`);
+      return true;
+    }
+    
+    console.log(`❓ Unknown authentication state for URL: ${url}`);
+    return false;
+  }
+
   async takeDebugScreenshot(page, stepName, description = '') {
     try {
       this.screenshotCounter++;
@@ -277,13 +306,84 @@ class MeetAuthenticator {
   }
 
   /**
-   * METHOD 4: App Passwords (for accounts with 2FA)
-   * Use Google App Passwords to bypass 2FA
+   * METHOD 4: App Passwords (RECOMMENDED for production)
+   * Use Google App Passwords to bypass 2FA completely
    */
   async authenticateWithAppPassword(page, email, appPassword) {
-    console.log('🔑 Starting app password authentication...');
-    // Note: App passwords work the same as regular passwords but bypass 2FA
-    return await this.performBasicAuth(page, email, appPassword);
+    console.log('🔑 Starting app password authentication (bypasses 2FA)...');
+    
+    try {
+      // App passwords work through direct Google accounts authentication
+      console.log('🎯 Navigating to Google accounts sign-in for app password auth...');
+      
+      await page.goto('https://accounts.google.com/signin/v2/identifier?service=mail&passive=true&rm=false&continue=https%3A//mail.google.com/mail/', { 
+        waitUntil: 'networkidle2', 
+        timeout: 60000 
+      });
+      
+      await this.takeDebugScreenshot(page, 'app_password_start', 'Starting app password authentication');
+      
+      // Enter email
+      console.log('📧 Entering email for app password authentication...');
+      await page.waitForSelector('input[type="email"]', { timeout: 10000 });
+      await page.type('input[type="email"]', email);
+      await this.takeDebugScreenshot(page, 'app_password_email', 'Email entered for app password');
+      
+      // Click Next for email
+      await this.clickNextButton(page, 'email');
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+      await this.takeDebugScreenshot(page, 'app_password_after_email', 'After email Next click');
+      
+      // Enter app password (this bypasses 2FA completely)
+      console.log('🔑 Entering Google App Password (bypassing 2FA)...');
+      await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+      await page.type('input[type="password"]', appPassword);
+      await this.takeDebugScreenshot(page, 'app_password_entered', 'App password entered');
+      
+      // Click Next for password
+      await this.clickNextButton(page, 'password');
+      
+      // App passwords should authenticate directly without 2FA prompts
+      console.log('⏳ Waiting for app password authentication (should bypass 2FA)...');
+      
+      // Wait for successful authentication - app passwords skip 2FA
+      await page.waitForFunction(() => {
+        const url = window.location.href;
+        // Check for sign-in pages (should NOT be considered authenticated)
+        const isSignInPage = url.includes('signin/identifier') || 
+                            url.includes('signin/v2/identifier') ||
+                            url.includes('signin/v3/identifier') ||
+                            url.includes('ServiceLogin') ||
+                            url.includes('accounts.google.com/AccountChooser');
+        
+        if (isSignInPage) {
+          return false; // Still on sign-in page, not authenticated
+        }
+        
+        // Check for authenticated pages or account avatar
+        return url.includes('mail.google.com') ||
+               url.includes('myaccount.google.com') || 
+               url.includes('accounts.google.com/signin/continue') ||
+               url.includes('accounts.google.com/b/0/ManageAccount') ||
+               document.querySelector('[data-ogsr-up]'); // Account avatar present
+      }, { timeout: 45000 }); // Longer timeout for app password auth
+      
+      await this.takeDebugScreenshot(page, 'app_password_success', 'App password authentication successful');
+      
+      console.log('✅ App password authentication completed successfully!');
+      return { success: true, method: 'app_password' };
+      
+    } catch (error) {
+      console.error('❌ App password authentication failed:', error.message);
+      await this.takeDebugScreenshot(page, 'app_password_failed', `App password auth failed: ${error.message}`);
+      
+      // Provide helpful error messages for app password issues
+      if (error.message.includes('timeout')) {
+        throw new Error(`App password authentication timed out. Please verify: 1) Your app password is correct, 2) Account has app passwords enabled, 3) No additional security prompts are blocking authentication.`);
+      } else {
+        throw new Error(`App password authentication failed: ${error.message}. Please verify your Google App Password is correct and hasn't expired.`);
+      }
+    }
   }
 
   async performBasicAuth(page, email, password) {

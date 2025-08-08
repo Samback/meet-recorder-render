@@ -92,23 +92,50 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 - **Appear as real participant** - Shows account name instead of "Guest"
 - **Access corporate meetings** - Required for many business/educational meetings
 
-## New Enhanced Authentication Methods (RECOMMENDED)
+## 🔑 **Google App Password Authentication (RECOMMENDED)**
 
-The system now supports multiple authentication approaches for better reliability:
+**The most reliable method for production use - bypasses all 2FA complexity!**
 
-### Method 1: Persistent Session (BEST for repeated recordings)
+### Primary Method: App Password (DEFAULT & RECOMMENDED)
 ```json
 {
   "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
   "email": "recorder@example.com", 
-  "password": "your-password",
-  "method": "persistent_session"
+  "password": "your-16-digit-app-password"
 }
 ```
-- **Advantages**: Login persists across recordings, fastest subsequent recordings, no re-authentication needed
-- **Use case**: Best for automated/scheduled recordings with same account
 
-### Method 2: Direct Meet Authentication (RECOMMENDED for single recordings)
+**🎯 Why App Passwords are the BEST choice:**
+- ✅ **Bypasses 2FA completely** - No phone confirmations needed
+- ✅ **Most reliable** - No device verification prompts
+- ✅ **Production ready** - Works consistently in automated environments  
+- ✅ **Simple setup** - One-time configuration
+- ✅ **No session management** - Each recording is independent
+
+### 🚀 **Quick Setup Guide:**
+
+1. **Enable 2FA on your Google account** (required for app passwords)
+2. **Generate App Password**:
+   - Go to https://myaccount.google.com/apppasswords
+   - Select "Mail" as the app type
+   - Copy the 16-digit password (spaces don't matter)
+3. **Use in recording requests** - Replace regular password with app password
+
+### **Example Request (Recommended):**
+```bash
+curl -X POST http://localhost:3000/api/record \
+  -H "Content-Type: application/json" \
+  -d '{
+    "meetUrl": "https://meet.google.com/your-meeting-id",
+    "email": "your-email@gmail.com",
+    "password": "abcd efgh ijkl mnop",
+    "options": {"audioFormat": "mp3"}
+  }'
+```
+
+## Alternative Authentication Methods
+
+### Method 2: Direct Meet Authentication
 ```json
 {
   "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
@@ -117,35 +144,22 @@ The system now supports multiple authentication approaches for better reliabilit
   "method": "direct_meet"
 }
 ```
-- **Advantages**: Goes directly to Meet URL, handles auth redirect cleanly, faster than Gmail-based
-- **Use case**: Best for one-off recordings, most reliable method
+- **Use case**: When you can't use app passwords
+- **Note**: May require 2FA confirmation
 
-### Method 3: App Password (BEST for 2FA accounts)
-```json
-{
-  "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
-  "email": "recorder@example.com", 
-  "password": "your-app-specific-password",
-  "method": "app_password"
-}
-```
-- **Advantages**: Bypasses 2FA completely, no device confirmation needed
-- **Setup**: Generate at https://myaccount.google.com/apppasswords
-- **Use case**: Accounts with 2FA enabled
-
-### Method 4: Cookie-based Authentication
+### Method 3: Persistent Session  
 ```json
 {
   "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
   "email": "recorder@example.com", 
   "password": "your-password",
-  "method": "cookies"
+  "method": "persistent_session"
 }
 ```
-- **Advantages**: Saves authentication cookies for reuse
-- **Use case**: When you want to manually manage authentication state
+- **Use case**: Multiple recordings with same account
+- **Advantage**: Login once, reuse session
 
-### Legacy Method (Fallback)
+### Method 4: Legacy (Fallback)
 ```json
 {
   "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
@@ -154,18 +168,19 @@ The system now supports multiple authentication approaches for better reliabilit
   "method": "legacy"
 }
 ```
-- **Note**: Original Gmail-based method, kept for compatibility
-- **Automatically used as fallback** if other methods fail
+- **Note**: Gmail-based authentication, automatic fallback only
 
-## Simplified Format (uses default method)
+## Simplified Format (uses app password by default)
 ```json
 {
   "meetUrl": "https://meet.google.com/xxx-xxxx-xxx",
   "email": "recorder@example.com", 
-  "password": "your-password"
+  "password": "your-app-password-or-regular-password"
 }
 ```
-- **Default method**: `direct_meet` (most reliable for general use)
+- **Smart detection**: Automatically detects app password format
+- **Default method**: `app_password` (most reliable)
+- **Automatic fallback**: If app password fails, tries regular authentication
 
 **Legacy googleAuth format (still supported):**
 ```json

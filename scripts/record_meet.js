@@ -21,13 +21,24 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       await page.screenshot({ path: screenshotPath, fullPage: true });
       console.log(`📸 Debug screenshot ${screenshotCounter}: ${stepName} - ${filename}`);
       
-      // Also save page URL and title for context
+      // Also save page URL and title for context, including authentication state
+      const currentUrl = page.url();
       const pageInfo = {
-        url: page.url(),
+        url: currentUrl,
         title: await page.title().catch(() => 'Unknown'),
         timestamp: new Date().toISOString(),
         step: stepName,
-        description: description
+        description: description,
+        authenticationState: {
+          isAuthenticated: isAuthenticated(currentUrl),
+          isSignInPage: currentUrl.includes('signin'),
+          urlAnalysis: {
+            hasGmail: currentUrl.includes('mail.google.com'),
+            hasMyAccount: currentUrl.includes('myaccount.google.com'),
+            hasSignIn: currentUrl.includes('signin'),
+            hasAccounts: currentUrl.includes('accounts.google.com')
+          }
+        }
       };
       
       const infoPath = path.join(recordingDir, `debug_${screenshotCounter.toString().padStart(2, '0')}_${stepName}_info.json`);
@@ -38,6 +49,35 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       console.log(`Failed to take debug screenshot for ${stepName}:`, error.message);
       return null;
     }
+  }
+  
+  // Helper function to check if user is truly authenticated (not just on a sign-in page)
+  function isAuthenticated(url) {
+    // First exclude sign-in pages (these take priority)
+    const isSignInPage = url.includes('signin/identifier') || 
+                        url.includes('signin/v2/identifier') ||
+                        url.includes('signin/v3/identifier') ||
+                        url.includes('ServiceLogin') ||
+                        url.includes('accounts.google.com/AccountChooser');
+    
+    if (isSignInPage) {
+      console.log(`🔍 Sign-in page detected, not authenticated: ${url}`);
+      return false;
+    }
+    
+    // Then check for truly authenticated pages
+    const authenticatedPages = url.includes('mail.google.com') ||
+                              url.includes('myaccount.google.com') || 
+                              url.includes('accounts.google.com/signin/continue') ||
+                              url.includes('accounts.google.com/b/0/ManageAccount');
+    
+    if (authenticatedPages) {
+      console.log(`✅ Authenticated page detected: ${url}`);
+      return true;
+    }
+    
+    console.log(`❓ Unknown authentication state for URL: ${url}`);
+    return false;
   }
   
   try {
@@ -94,35 +134,41 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
     let authenticatedPage = null;
     
     if (googleAuth.email && googleAuth.password) {
-      console.log(`Starting Google authentication for: ${googleAuth.email}`);
+      console.log(`🔐 Starting Google authentication for: ${googleAuth.email}`);
       
       const authenticator = new MeetAuthenticator(recordingDir);
-      const authMethod = googleAuth.method || 'improved_direct'; // Default to improved method
       
-      console.log(`Using authentication method: ${authMethod}`);
+      // PRIORITIZE APP PASSWORD METHOD - Most reliable for production use
+      let authMethod = googleAuth.method || 'app_password'; // Default to app password
+      const isAppPassword = authMethod === 'app_password' || 
+                           (authMethod !== 'legacy' && googleAuth.password && googleAuth.password.length === 16 && !/[a-z]/.test(googleAuth.password));
+      
+      if (isAppPassword && authMethod !== 'app_password') {
+        console.log('🔑 Detected app password format, switching to app_password method');
+        authMethod = 'app_password';
+      }
+      
+      console.log(`🚀 Using authentication method: ${authMethod}`);
+      console.log(isAppPassword ? '🔑 Using Google App Password (bypasses 2FA)' : '🔐 Using regular Google credentials');
       
       try {
         let authResult;
         
+        // Simplified authentication flow with app password priority
         switch (authMethod) {
-          case 'persistent_session':
-            // Use persistent browser session (best for repeated recordings)
-            authResult = await authenticator.authenticateWithPersistentSession(
+          case 'app_password':
+            // RECOMMENDED: Use Google App Password (bypasses all 2FA complexity)
+            console.log('🔑 Starting app password authentication - most reliable method');
+            authResult = await authenticator.authenticateWithAppPassword(
+              page, 
               googleAuth.email, 
-              googleAuth.password, 
-              meetUrl
+              googleAuth.password
             );
-            authenticatedBrowser = authResult.browser;
-            authenticatedPage = authResult.page;
-            // Replace the main browser and page with authenticated ones
-            if (browser) await browser.close();
-            browser = authenticatedBrowser;
-            page = authenticatedPage;
-            skipMeetNavigation = true; // Already on Meet page
             break;
             
           case 'direct_meet':
-            // Go directly to Meet URL and authenticate if needed
+            // Direct to Meet with authentication  
+            console.log('🎯 Starting direct Meet authentication');
             authResult = await authenticator.authenticateDirectToMeet(
               page, 
               meetUrl, 
@@ -132,68 +178,108 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
             skipMeetNavigation = true; // Already on Meet page
             break;
             
-          case 'cookies':
-            // Use cookie-based authentication
-            authResult = await authenticator.authenticateWithCookies(
-              page, 
+          case 'persistent_session':
+            // Use persistent browser session
+            console.log('💾 Starting persistent session authentication');
+            authResult = await authenticator.authenticateWithPersistentSession(
               googleAuth.email, 
-              googleAuth.password
+              googleAuth.password, 
+              meetUrl
             );
+            authenticatedBrowser = authResult.browser;
+            authenticatedPage = authResult.page;
+            if (browser) await browser.close();
+            browser = authenticatedBrowser;
+            page = authenticatedPage;
+            skipMeetNavigation = true;
             break;
             
-          case 'app_password':
-            // Use Google App Password (bypasses 2FA)
+          case 'legacy':
+            // Original Gmail-based method (fallback only)
+            console.log('📧 Using legacy Gmail-based authentication...');
+            await performLegacyAuthentication();
+            authResult = { success: true, method: 'legacy' };
+            break;
+            
+          default:
+            // For any unknown method, default to app password
+            console.log(`❓ Unknown method '${authMethod}', defaulting to app password`);
             authResult = await authenticator.authenticateWithAppPassword(
               page, 
               googleAuth.email, 
               googleAuth.password
             );
             break;
-            
-          case 'legacy':
-          default:
-            // Fall back to original Gmail-based method
-            console.log('Using legacy Gmail-based authentication...');
-            return await performLegacyAuthentication();
         }
         
-        if (authResult.success) {
+        if (authResult && authResult.success) {
           console.log(`✅ Authentication successful using method: ${authResult.method}`);
           authenticationMode = 'authenticated';
           updateMetadata(recordingDir, {
             status: 'authenticated',
             authMethod: authResult.method,
-            authenticatedAt: new Date().toISOString()
+            authenticatedAt: new Date().toISOString(),
+            recommendAppPassword: !isAppPassword
           });
         } else {
           throw new Error('Authentication result indicates failure');
         }
         
       } catch (error) {
-        console.error(`Authentication failed with method ${authMethod}:`, error.message);
+        console.error(`❌ Authentication failed with method ${authMethod}:`, error.message);
         
-        // Try fallback to legacy method
-        if (authMethod !== 'legacy') {
-          console.log('🔄 Falling back to legacy authentication method...');
+        // Smart fallback logic
+        if (authMethod === 'app_password') {
+          console.log('💡 App password failed. This might be a regular password, trying direct authentication...');
           try {
-            await performLegacyAuthentication();
-            authenticationMode = 'authenticated_legacy_fallback';
-          } catch (legacyError) {
-            console.error('Legacy authentication also failed:', legacyError.message);
+            authResult = await authenticator.authenticateDirectToMeet(
+              page, 
+              meetUrl, 
+              googleAuth.email, 
+              googleAuth.password
+            );
+            if (authResult.success) {
+              console.log('✅ Direct authentication succeeded as fallback');
+              authenticationMode = 'authenticated_fallback';
+              skipMeetNavigation = true;
+            } else {
+              throw new Error('Direct authentication fallback failed');
+            }
+          } catch (fallbackError) {
+            console.error('❌ Both app password and direct authentication failed');
             updateMetadata(recordingDir, {
               status: 'auth_failed',
-              error: `All authentication methods failed. Primary: ${error.message}, Legacy: ${legacyError.message}`,
-              failedAt: new Date().toISOString()
+              error: `App password authentication failed: ${error.message}. Direct authentication fallback also failed: ${fallbackError.message}`,
+              failedAt: new Date().toISOString(),
+              suggestion: 'Try generating a new Google App Password at https://myaccount.google.com/apppasswords'
             });
-            throw new Error(`Authentication failed with all methods`);
+            throw new Error(`Authentication failed. Please verify your Google App Password or generate a new one.`);
           }
         } else {
-          updateMetadata(recordingDir, {
-            status: 'auth_failed',
-            error: error.message,
-            failedAt: new Date().toISOString()
-          });
-          throw error;
+          // For other methods, try app password as fallback
+          console.log('🔄 Trying app password as fallback method...');
+          try {
+            authResult = await authenticator.authenticateWithAppPassword(
+              page, 
+              googleAuth.email, 
+              googleAuth.password
+            );
+            if (authResult.success) {
+              console.log('✅ App password fallback succeeded');
+              authenticationMode = 'authenticated_app_password_fallback';
+            } else {
+              throw new Error('App password fallback failed');
+            }
+          } catch (appPasswordError) {
+            console.error('❌ Primary method and app password fallback both failed');
+            updateMetadata(recordingDir, {
+              status: 'auth_failed',
+              error: `Primary method '${authMethod}' failed: ${error.message}. App password fallback failed: ${appPasswordError.message}`,
+              failedAt: new Date().toISOString(),
+              suggestion: 'Consider using Google App Password method for most reliable authentication'
+            });
+            throw new Error(`All authentication methods failed. Consider using app password method.`);
+          }
         }
       }
       
@@ -232,14 +318,10 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
         }
       }
       
-      // Also check if we're on Gmail or account management pages
+      // Check URL-based authentication status using helper function
       const currentUrl = page.url();
-      if (currentUrl.includes('mail.google.com') ||
-          currentUrl.includes('myaccount.google.com') || 
-          currentUrl.includes('accounts.google.com/signin/continue') ||
-          currentUrl.includes('accounts.google.com/b/0/ManageAccount')) {
+      if (isAuthenticated(currentUrl)) {
         alreadyLoggedIn = true;
-        console.log(`Already logged in - on authenticated page: ${currentUrl}`);
       }
       
       if (!alreadyLoggedIn) {
@@ -733,11 +815,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
                 console.log(`⏳ Still waiting for device confirmation... ${Math.floor((Date.now() - startWait) / 1000)}s elapsed`);
                 await new Promise(resolve => setTimeout(resolve, 10000)); // Check every 10 seconds
                 
-                // Check if we've been redirected to Gmail or authenticated page
+                // Check if we've been redirected to authenticated page
                 const currentUrl = page.url();
-                if (currentUrl.includes('mail.google.com') ||
-                    currentUrl.includes('myaccount.google.com') ||
-                    currentUrl.includes('accounts.google.com/signin/continue')) {
+                if (isAuthenticated(currentUrl)) {
                   confirmationComplete = true;
                   console.log('✅ Device confirmation completed successfully!');
                   break;
@@ -778,6 +858,19 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           await page.waitForFunction(
             () => {
               const url = window.location.href;
+              // Check for sign-in pages (should NOT be considered authenticated)
+              const isSignInPage = url.includes('signin/identifier') || 
+                                  url.includes('signin/v2/identifier') ||
+                                  url.includes('signin/v3/identifier') ||
+                                  url.includes('ServiceLogin') ||
+                                  url.includes('accounts.google.com/signin') ||
+                                  url.includes('accounts.google.com/AccountChooser');
+              
+              if (isSignInPage) {
+                return false; // Still on sign-in page, not authenticated
+              }
+              
+              // Check for authenticated pages or account avatar
               return url.includes('mail.google.com') ||
                      url.includes('myaccount.google.com') || 
                      url.includes('accounts.google.com/signin/continue') ||
