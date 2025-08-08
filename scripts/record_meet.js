@@ -56,6 +56,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
     });
     
     // Handle Google authentication if credentials provided - visit accounts.google.com first
+    let authenticationMode = 'anonymous'; // Default to anonymous
+    let skipMeetNavigation = false;
+    
     if (googleAuth.email && googleAuth.password) {
       console.log(`Starting Google authentication for: ${googleAuth.email}`);
       
@@ -219,9 +222,131 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
             console.log('Pressed Enter on email field');
           }
           
-          // Wait for password field
-          await page.waitForSelector('input[type="password"]', { timeout: 15000 });
-          const passwordField = await page.$('input[type="password"]');
+          // Check for different possible next steps after email entry
+          console.log('Waiting for next step after email entry...');
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Check if we're on an account verification page instead of password
+          const currentPageUrl = page.url();
+          console.log(`Current URL after email: ${currentPageUrl}`);
+          
+          // Check for account verification indicators
+          const verificationIndicators = [
+            'text=Wie heißen Sie?', // German: "What is your name?"
+            'text=What\'s your name?', // English equivalent
+            'text=Create your Google Account',
+            'text=Verify your account',
+            'text=Additional verification required',
+            'input[name="firstName"]',
+            'input[name="lastName"]',
+            '[aria-label*="First name"]',
+            '[aria-label*="Last name"]'
+          ];
+          
+          let isVerificationPage = false;
+          for (const indicator of verificationIndicators) {
+            try {
+              if (indicator.startsWith('text=')) {
+                const text = indicator.replace('text=', '');
+                const found = await page.evaluate((searchText) => {
+                  return document.body.textContent.includes(searchText);
+                }, text);
+                if (found) {
+                  isVerificationPage = true;
+                  console.log(`Account verification required - found: "${text}"`);
+                  break;
+                }
+              } else {
+                const element = await page.$(indicator);
+                if (element) {
+                  isVerificationPage = true;
+                  console.log(`Account verification required - found selector: ${indicator}`);
+                  break;
+                }
+              }
+            } catch (e) {
+              // Continue checking
+            }
+          }
+          
+          if (isVerificationPage) {
+            console.log('Account verification/creation page detected - will proceed with anonymous access');
+            const verificationScreenshot = path.join(recordingDir, 'account_verification_required.png');
+            await page.screenshot({ path: verificationScreenshot, fullPage: true });
+            
+            updateMetadata(recordingDir, {
+              status: 'verification_required_proceeding_anonymous',
+              warning: 'Account verification required - Google is requesting additional account information. Proceeding with anonymous access to Meet.',
+              verificationScreenshot: 'account_verification_required.png',
+              proceedingAnonymous: true,
+              verificationDetectedAt: new Date().toISOString()
+            });
+            
+            console.log('⚠️  Account verification required - proceeding with anonymous access to Meet');
+            // Set flag to skip further authentication steps
+            const skipAuth = true;
+            
+            // Set flags to proceed with anonymous access
+            authenticationMode = 'anonymous';
+            skipMeetNavigation = true;
+            
+            // Navigate directly to Meet URL
+            console.log(`Navigating to Meet with anonymous access: ${meetUrl}`);
+            await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+            console.log('Meet page loaded successfully (anonymous access)');
+            
+            updateMetadata(recordingDir, { 
+              status: 'ready_to_join_anonymous',
+              meetPageLoadedAt: new Date().toISOString(),
+              authenticationMode: 'anonymous'
+            });
+          }
+          
+          // Look for password field with multiple selectors and longer timeout
+          const passwordSelectors = [
+            'input[type="password"]',
+            '#password',
+            'input[name="password"]',
+            'input[autocomplete="current-password"]',
+            '[aria-label*="password"]',
+            '[aria-label*="Password"]'
+          ];
+          
+          let passwordField = null;
+          for (const selector of passwordSelectors) {
+            try {
+              console.log(`Looking for password field: ${selector}`);
+              passwordField = await page.waitForSelector(selector, { timeout: 8000 });
+              if (passwordField) {
+                console.log(`Found password field: ${selector}`);
+                break;
+              }
+            } catch (e) {
+              console.log(`Password selector failed: ${selector} - ${e.message}`);
+            }
+          }
+          
+          if (!passwordField) {
+            // Take a screenshot to see what page we're on
+            const passwordFailScreenshot = path.join(recordingDir, 'password_field_not_found.png');
+            await page.screenshot({ path: passwordFailScreenshot, fullPage: true });
+            console.log(`Password field not found screenshot saved: ${passwordFailScreenshot}`);
+            
+            // Check for other possible pages we might be on
+            const pageTitle = await page.title();
+            const pageContent = await page.evaluate(() => document.body.textContent.slice(0, 500));
+            
+            updateMetadata(recordingDir, {
+              status: 'password_field_not_found',
+              error: `Could not find password field. Page title: "${pageTitle}". Content preview: "${pageContent.substring(0, 200)}..."`,
+              passwordFailScreenshot: 'password_field_not_found.png',
+              currentUrl: currentPageUrl,
+              failedAt: new Date().toISOString()
+            });
+            
+            throw new Error(`Could not find password field. This might be due to 2FA, account verification, or other security measures. Check the screenshot for details.`);
+          }
+          
           await passwordField.click();
           await passwordField.type(googleAuth.password);
           
@@ -261,6 +386,7 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           );
           
           console.log('Google authentication completed successfully');
+          authenticationMode = 'authenticated';
           updateMetadata(recordingDir, { 
             status: 'authenticated',
             authenticatedAt: new Date().toISOString()
@@ -279,6 +405,7 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
         }
       } else {
         console.log('Already authenticated with Google account, proceeding to Meet...');
+        authenticationMode = 'already_authenticated';
         updateMetadata(recordingDir, { 
           status: 'already_authenticated',
           authenticatedAt: new Date().toISOString()
@@ -286,16 +413,18 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       }
     }
     
-    // Now navigate to Meet URL with authenticated session
-    console.log(`Navigating to Meet with authenticated session: ${meetUrl}`);
-    await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-    console.log('Meet page loaded successfully');
-    
-    // The authentication is already handled above, so we can proceed directly to meeting join
-    updateMetadata(recordingDir, { 
-      status: 'ready_to_join',
-      meetPageLoadedAt: new Date().toISOString()
-    });
+    // Navigate to Meet URL if we haven't already (due to verification fallback)
+    if (!skipMeetNavigation) {
+      console.log(`Navigating to Meet with ${authenticationMode} session: ${meetUrl}`);
+      await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+      console.log('Meet page loaded successfully');
+      
+      updateMetadata(recordingDir, { 
+        status: 'ready_to_join',
+        meetPageLoadedAt: new Date().toISOString(),
+        authenticationMode: authenticationMode
+      });
+    }
     
     // Join meeting logic - try multiple selector approaches
     console.log('Waiting for meeting interface...');

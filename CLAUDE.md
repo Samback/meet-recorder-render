@@ -133,6 +133,14 @@ curl http://localhost:3000/api/download/RECORDING_ID/mp3
 - Use a dedicated Google account for recording
 - Consider app-specific passwords for enhanced security
 
+**Account Verification Issues:**
+If you encounter account verification errors (Google requesting name, phone, etc.):
+1. **New Account Setup**: Google requires additional verification for new accounts
+2. **New Device/Location**: Logging in from Docker containers may trigger verification
+3. **Automatic Fallback**: The system will automatically fallback to anonymous access
+4. **Manual Setup**: Complete account setup manually in a regular browser first
+5. **Established Accounts**: Use accounts that have been used before and are fully verified
+
 ### Chrome/Puppeteer Issues
 If you see "Could not find Chrome" errors:
 - Fixed in latest version with explicit Chrome path
