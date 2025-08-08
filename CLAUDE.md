@@ -177,12 +177,35 @@ https://your-app.onrender.com/api/debug/RECORDING_ID/FILENAME
 ```
 
 **Common Debug Files:**
-- `debug_screenshot.png` - UI screenshot
+- `debug_screenshot.png` - UI screenshot (legacy)
+- `debug_XX_stepname_timestamp.png` - Detailed step-by-step screenshots (NEW)
+- `debug_XX_stepname_info.json` - Page context for each screenshot (NEW)
 - `page_content.html` - HTML page content
 - `process.log` - Main process output
 - `error.log` - Error messages
 - `ffmpeg.log` - Audio recording logs
 - `metadata.json` - Recording metadata
+
+**New Enhanced Debug Screenshots:**
+The system now automatically captures detailed screenshots at every step of the authentication and meeting join process:
+- `debug_01_gmail_landing_*.png` - Gmail page load
+- `debug_02_after_signin_click_*.png` - After clicking sign in
+- `debug_03_before_email_search_*.png` - Before searching for email field
+- `debug_04_email_entered_*.png` - After entering email
+- `debug_05_after_email_next_*.png` - After clicking Next on email
+- `debug_06_before_password_search_*.png` - Before password field search
+- `debug_07_password_entered_*.png` - After entering password
+- `debug_08_after_password_submit_*.png` - After password submission
+- `debug_09_device_confirmation_*.png` - Device confirmation screen
+- `debug_10_auth_success_*.png` - Successful authentication
+- `debug_11_meet_loaded_*.png` - Meet page loaded
+- `debug_12_before_access_check_*.png` - Before access restriction check
+- `debug_13_before_camera_join_*.png` - Before camera/join interactions
+- `debug_14_camera_disabled_*.png` - After disabling camera
+- `debug_15_join_clicked_*.png` - After clicking join button
+- `debug_16_ready_to_record_*.png` - Ready to start recording
+
+Each screenshot includes a corresponding `.json` file with page URL, title, timestamp, and description.
 
 ## Key File Locations
 

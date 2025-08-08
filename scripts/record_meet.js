@@ -7,6 +7,37 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
   const RECORDINGS_DIR = process.env.RECORDINGS_DIR || '/tmp/recordings';
   const recordingDir = `${RECORDINGS_DIR}/${recordingId}`;
   let browser, ffmpegProcess;
+  let screenshotCounter = 0;
+  
+  // Helper function to take debug screenshots
+  async function takeDebugScreenshot(page, stepName, description = '') {
+    try {
+      screenshotCounter++;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `debug_${screenshotCounter.toString().padStart(2, '0')}_${stepName}_${timestamp}.png`;
+      const screenshotPath = path.join(recordingDir, filename);
+      
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      console.log(`📸 Debug screenshot ${screenshotCounter}: ${stepName} - ${filename}`);
+      
+      // Also save page URL and title for context
+      const pageInfo = {
+        url: page.url(),
+        title: await page.title().catch(() => 'Unknown'),
+        timestamp: new Date().toISOString(),
+        step: stepName,
+        description: description
+      };
+      
+      const infoPath = path.join(recordingDir, `debug_${screenshotCounter.toString().padStart(2, '0')}_${stepName}_info.json`);
+      fs.writeFileSync(infoPath, JSON.stringify(pageInfo, null, 2));
+      
+      return filename;
+    } catch (error) {
+      console.log(`Failed to take debug screenshot for ${stepName}:`, error.message);
+      return null;
+    }
+  }
   
   try {
     console.log(`Starting recording ${recordingId} for ${meetUrl}`);
@@ -68,6 +99,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       
       // Wait for page to stabilize
       await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Take screenshot of Gmail landing page
+      await takeDebugScreenshot(page, 'gmail_landing', 'Initial Gmail page load');
       
       // Check if we're already logged in by looking for account indicators
       const accountIndicators = [
@@ -160,6 +194,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           }
           
           await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Take screenshot after clicking sign in
+          await takeDebugScreenshot(page, 'after_signin_click', 'Page after clicking sign in');
         }
         
         // Perform authentication
@@ -169,6 +206,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
         });
         
         try {
+          // Take screenshot before looking for email field
+          await takeDebugScreenshot(page, 'before_email_search', 'Page before searching for email field');
+          
           // Look for email field
           const emailSelectors = [
             'input[type="email"]',
@@ -200,8 +240,18 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           await emailField.click();
           await emailField.type(googleAuth.email);
           
-          // Click next button
-          const nextSelectors = ['#identifierNext', 'button[type="submit"]', '[jsname="LgbsSe"]'];
+          // Take screenshot after entering email
+          await takeDebugScreenshot(page, 'email_entered', 'After entering email address');
+          
+          // Click next button - fix selector names
+          const nextSelectors = [
+            '#identifierNext', 
+            'button[type="submit"]', 
+            '[jsname="LgbsSe"]',
+            'button:has-text("Next")',
+            '[aria-label*="Next"]',
+            '[data-tooltip*="Next"]'
+          ];
           let nextClicked = false;
           for (const selector of nextSelectors) {
             try {
@@ -218,6 +268,32 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           }
           
           if (!nextClicked) {
+            // Try text-based search for Next button
+            try {
+              const clicked = await page.evaluate(() => {
+                const elements = document.querySelectorAll('button, div[role="button"], a');
+                for (const el of elements) {
+                  const text = el.textContent?.toLowerCase() || '';
+                  const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || '';
+                  if (text.includes('next') || ariaLabel.includes('next') || 
+                      text.includes('weiter') || text.includes('continue')) { // Support German/other languages
+                    el.click();
+                    return text || ariaLabel;
+                  }
+                }
+                return false;
+              });
+              
+              if (clicked) {
+                console.log(`Next button clicked via text search: "${clicked}"`);
+                nextClicked = true;
+              }
+            } catch (e) {
+              console.log('Text-based next search failed:', e.message);
+            }
+          }
+          
+          if (!nextClicked) {
             // Try Enter key as fallback
             await emailField.press('Enter');
             console.log('Pressed Enter on email field');
@@ -226,6 +302,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           // Check for different possible next steps after email entry
           console.log('Waiting for next step after email entry...');
           await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Take screenshot after clicking next
+          await takeDebugScreenshot(page, 'after_email_next', 'Page after clicking Next on email step');
           
           // Check if we're on an account verification page instead of password
           const currentPageUrl = page.url();
@@ -304,6 +383,8 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           }
           
           // Look for password field with multiple selectors and longer timeout
+          await takeDebugScreenshot(page, 'before_password_search', 'Page before searching for password field');
+          
           const passwordSelectors = [
             'input[type="password"]',
             '#password',
@@ -351,8 +432,18 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           await passwordField.click();
           await passwordField.type(googleAuth.password);
           
+          // Take screenshot after entering password
+          await takeDebugScreenshot(page, 'password_entered', 'After entering password');
+          
           // Click password next button
-          const passwordNextSelectors = ['#passwordNext', 'button[type="submit"]', '[jsname="LgbsSe"]'];
+          const passwordNextSelectors = [
+            '#passwordNext', 
+            'button[type="submit"]', 
+            '[jsname="LgbsSe"]',
+            'button:has-text("Next")',
+            '[aria-label*="Next"]',
+            '[data-tooltip*="Next"]'
+          ];
           let passwordNextClicked = false;
           for (const selector of passwordNextSelectors) {
             try {
@@ -369,6 +460,32 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           }
           
           if (!passwordNextClicked) {
+            // Try text-based search for Next button
+            try {
+              const clicked = await page.evaluate(() => {
+                const elements = document.querySelectorAll('button, div[role="button"], a');
+                for (const el of elements) {
+                  const text = el.textContent?.toLowerCase() || '';
+                  const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || '';
+                  if (text.includes('next') || ariaLabel.includes('next') || 
+                      text.includes('weiter') || text.includes('continue')) { // Support German/other languages
+                    el.click();
+                    return text || ariaLabel;
+                  }
+                }
+                return false;
+              });
+              
+              if (clicked) {
+                console.log(`Password Next button clicked via text search: "${clicked}"`);
+                passwordNextClicked = true;
+              }
+            } catch (e) {
+              console.log('Text-based password next search failed:', e.message);
+            }
+          }
+          
+          if (!passwordNextClicked) {
             // Try Enter key as fallback
             await passwordField.press('Enter');
             console.log('Pressed Enter on password field');
@@ -377,6 +494,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           // Wait for authentication response - could be success, 2FA, or device confirmation
           console.log('Waiting for authentication response...');
           await new Promise(resolve => setTimeout(resolve, 5000));
+          
+          // Take screenshot after password submission
+          await takeDebugScreenshot(page, 'after_password_submit', 'Page after submitting password');
           
           const authUrl = page.url();
           console.log(`Authentication response URL: ${authUrl}`);
@@ -427,6 +547,10 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           
           if (needsDeviceConfirmation) {
             console.log(`📱 Device confirmation required using: ${confirmationMethod}`);
+            
+            // Take dedicated screenshot for device confirmation
+            await takeDebugScreenshot(page, 'device_confirmation', 'Device confirmation required page');
+            
             const confirmationScreenshot = path.join(recordingDir, 'device_confirmation_required.png');
             await page.screenshot({ path: confirmationScreenshot, fullPage: true });
             
@@ -557,6 +681,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
             { timeout: 30000 }
           );
           
+          // Take screenshot of successful authentication
+          await takeDebugScreenshot(page, 'auth_success', 'Successfully authenticated to Google');
+          
           console.log('✅ Google authentication completed successfully!');
           authenticationMode = 'authenticated';
           updateMetadata(recordingDir, { 
@@ -592,6 +719,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
       console.log('Meet page loaded successfully');
       
+      // Take screenshot of Meet page after loading
+      await takeDebugScreenshot(page, 'meet_loaded', 'Google Meet page loaded');
+      
       updateMetadata(recordingDir, { 
         status: 'ready_to_join',
         meetPageLoadedAt: new Date().toISOString(),
@@ -604,6 +734,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
     
     // Wait for page to load completely
     await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // Take screenshot before checking for access restrictions
+    await takeDebugScreenshot(page, 'before_access_check', 'Before checking meeting access restrictions');
     
     // Check for meeting access restrictions
     const accessDeniedSelectors = [
@@ -691,6 +824,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       }
     }
     
+    // Take screenshot before camera/join interactions
+    await takeDebugScreenshot(page, 'before_camera_join', 'Before camera disable and join button search');
+    
     // Try to find and disable camera
     const cameraSelectors = [
       '[data-is-muted="false"]', // Camera toggle
@@ -705,6 +841,8 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
         if (cameraButton) {
           await cameraButton.click();
           console.log(`Camera disabled using selector: ${selector}`);
+          // Take screenshot after camera disable
+          await takeDebugScreenshot(page, 'camera_disabled', 'After disabling camera');
           break;
         }
       } catch (e) {
@@ -731,6 +869,8 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           await joinButton.click();
           console.log(`Join button clicked using selector: ${selector}`);
           joinSuccessful = true;
+          // Take screenshot after successful join click
+          await takeDebugScreenshot(page, 'join_clicked', 'After clicking join button');
           break;
         }
       } catch (e) {
@@ -750,6 +890,8 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
             await button.click();
             console.log(`Join button clicked via text search: "${text}" / "${ariaLabel}"`);
             joinSuccessful = true;
+            // Take screenshot after text-based join click
+            await takeDebugScreenshot(page, 'join_text_clicked', 'After clicking join via text search');
             break;
           }
         }
@@ -787,6 +929,9 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
     }
     
     await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Take final screenshot before starting recording
+    await takeDebugScreenshot(page, 'ready_to_record', 'Meeting joined, ready to start recording');
     
     updateMetadata(recordingDir, { 
       status: 'recording',
