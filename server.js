@@ -91,9 +91,10 @@ app.post('/api/record', async (req, res) => {
         maxDuration: options.maxDuration || 14400
       },
       authentication: authConfig.email ? {
-        method: 'google',
+        method: authConfig.method || 'improved_direct', // Support new auth methods
         email: authConfig.email,
-        hasCredentials: !!authConfig.password
+        hasCredentials: !!authConfig.password,
+        authType: 'google'
       } : { method: 'anonymous' },
       recordingDir
     };

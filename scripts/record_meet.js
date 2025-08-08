@@ -2,6 +2,7 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { MeetAuthenticator } = require('./auth_improvements');
 
 async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
   const RECORDINGS_DIR = process.env.RECORDINGS_DIR || '/tmp/recordings';
@@ -86,12 +87,117 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       targetUrl: meetUrl
     });
     
-    // Handle Google authentication if credentials provided - visit accounts.google.com first
+    // Handle Google authentication if credentials provided - use improved methods
     let authenticationMode = 'anonymous'; // Default to anonymous
     let skipMeetNavigation = false;
+    let authenticatedBrowser = null;
+    let authenticatedPage = null;
     
     if (googleAuth.email && googleAuth.password) {
       console.log(`Starting Google authentication for: ${googleAuth.email}`);
+      
+      const authenticator = new MeetAuthenticator(recordingDir);
+      const authMethod = googleAuth.method || 'improved_direct'; // Default to improved method
+      
+      console.log(`Using authentication method: ${authMethod}`);
+      
+      try {
+        let authResult;
+        
+        switch (authMethod) {
+          case 'persistent_session':
+            // Use persistent browser session (best for repeated recordings)
+            authResult = await authenticator.authenticateWithPersistentSession(
+              googleAuth.email, 
+              googleAuth.password, 
+              meetUrl
+            );
+            authenticatedBrowser = authResult.browser;
+            authenticatedPage = authResult.page;
+            // Replace the main browser and page with authenticated ones
+            if (browser) await browser.close();
+            browser = authenticatedBrowser;
+            page = authenticatedPage;
+            skipMeetNavigation = true; // Already on Meet page
+            break;
+            
+          case 'direct_meet':
+            // Go directly to Meet URL and authenticate if needed
+            authResult = await authenticator.authenticateDirectToMeet(
+              page, 
+              meetUrl, 
+              googleAuth.email, 
+              googleAuth.password
+            );
+            skipMeetNavigation = true; // Already on Meet page
+            break;
+            
+          case 'cookies':
+            // Use cookie-based authentication
+            authResult = await authenticator.authenticateWithCookies(
+              page, 
+              googleAuth.email, 
+              googleAuth.password
+            );
+            break;
+            
+          case 'app_password':
+            // Use Google App Password (bypasses 2FA)
+            authResult = await authenticator.authenticateWithAppPassword(
+              page, 
+              googleAuth.email, 
+              googleAuth.password
+            );
+            break;
+            
+          case 'legacy':
+          default:
+            // Fall back to original Gmail-based method
+            console.log('Using legacy Gmail-based authentication...');
+            return await performLegacyAuthentication();
+        }
+        
+        if (authResult.success) {
+          console.log(`✅ Authentication successful using method: ${authResult.method}`);
+          authenticationMode = 'authenticated';
+          updateMetadata(recordingDir, {
+            status: 'authenticated',
+            authMethod: authResult.method,
+            authenticatedAt: new Date().toISOString()
+          });
+        } else {
+          throw new Error('Authentication result indicates failure');
+        }
+        
+      } catch (error) {
+        console.error(`Authentication failed with method ${authMethod}:`, error.message);
+        
+        // Try fallback to legacy method
+        if (authMethod !== 'legacy') {
+          console.log('🔄 Falling back to legacy authentication method...');
+          try {
+            await performLegacyAuthentication();
+            authenticationMode = 'authenticated_legacy_fallback';
+          } catch (legacyError) {
+            console.error('Legacy authentication also failed:', legacyError.message);
+            updateMetadata(recordingDir, {
+              status: 'auth_failed',
+              error: `All authentication methods failed. Primary: ${error.message}, Legacy: ${legacyError.message}`,
+              failedAt: new Date().toISOString()
+            });
+            throw new Error(`Authentication failed with all methods`);
+          }
+        } else {
+          updateMetadata(recordingDir, {
+            status: 'auth_failed',
+            error: error.message,
+            failedAt: new Date().toISOString()
+          });
+          throw error;
+        }
+      }
+      
+      async function performLegacyAuthentication() {
       
       // First, visit Gmail to trigger authentication flow and handle redirects
       console.log('Starting authentication flow at gmail.com...');
@@ -703,14 +809,15 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           });
           throw new Error(`Authentication failed: ${error.message}`);
         }
-      } else {
-        console.log('Already authenticated with Google account, proceeding to Meet...');
-        authenticationMode = 'already_authenticated';
-        updateMetadata(recordingDir, { 
-          status: 'already_authenticated',
-          authenticatedAt: new Date().toISOString()
-        });
-      }
+        } else {
+          console.log('Already authenticated with Google account, proceeding to Meet...');
+          authenticationMode = 'already_authenticated';
+          updateMetadata(recordingDir, { 
+            status: 'already_authenticated',
+            authenticatedAt: new Date().toISOString()
+          });
+        }
+      } // End of performLegacyAuthentication function
     }
     
     // Navigate to Meet URL if we haven't already (due to verification fallback)
