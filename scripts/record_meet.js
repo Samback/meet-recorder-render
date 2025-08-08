@@ -55,243 +55,128 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
       targetUrl: meetUrl
     });
     
-    // Navigate to meet first
-    console.log(`Navigating to: ${meetUrl}`);
-    await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-    console.log('Page loaded successfully');
-    
-    // Handle Google authentication if credentials provided and login is required
+    // Handle Google authentication if credentials provided - visit accounts.google.com first
     if (googleAuth.email && googleAuth.password) {
-      console.log(`Checking if Google authentication is needed for: ${googleAuth.email}`);
+      console.log(`Starting Google authentication for: ${googleAuth.email}`);
       
-      // Look for login indicators
-      const loginIndicators = [
-        'input[type="email"]',
-        '#identifierId',
-        'a[href*="accounts.google.com"]',
-        "text=Sign in",
-        "text=Use another account"
+      // First, visit Google accounts page to check authentication status
+      console.log('Checking Google account authentication at accounts.google.com...');
+      await page.goto('https://accounts.google.com/', { waitUntil: 'networkidle2', timeout: 60000 });
+      
+      // Wait for page to stabilize
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Check if we're already logged in by looking for account indicators
+      const accountIndicators = [
+        '[data-ogsr-up]',  // Google account avatar/profile
+        '[aria-label*="Account"]',
+        '[aria-label*="Profile"]',
+        '.gb_Ab',  // Google bar account info
+        '[jsname="jqHDEe"]'  // Account switcher
       ];
       
-      let needsLogin = false;
-      for (const indicator of loginIndicators) {
+      let alreadyLoggedIn = false;
+      for (const indicator of accountIndicators) {
         try {
-          if (indicator.startsWith('text=')) {
-            const text = indicator.replace('text=', '');
-            const found = await page.evaluate((searchText) => {
-              return document.body.textContent.includes(searchText);
-            }, text);
-            if (found) {
-              needsLogin = true;
-              console.log(`Login needed - found: "${text}"`);
-              break;
-            }
-          } else {
-            const element = await page.$(indicator);
-            if (element) {
-              needsLogin = true;
-              console.log(`Login needed - found selector: ${indicator}`);
-              break;
-            }
+          const element = await page.$(indicator);
+          if (element) {
+            alreadyLoggedIn = true;
+            console.log(`Already logged in to Google - found indicator: ${indicator}`);
+            break;
           }
         } catch (e) {
           // Continue checking
         }
       }
       
-      if (needsLogin) {
-        console.log(`Authenticating with Google account: ${googleAuth.email}`);
+      // Also check if we're on the myaccount page or similar
+      const currentUrl = page.url();
+      if (currentUrl.includes('myaccount.google.com') || 
+          currentUrl.includes('accounts.google.com/signin/continue') ||
+          currentUrl.includes('accounts.google.com/b/0/ManageAccount')) {
+        alreadyLoggedIn = true;
+        console.log(`Already logged in - on account management page: ${currentUrl}`);
+      }
+      
+      if (!alreadyLoggedIn) {
+        // Need to login - look for sign in option
+        const signInSelectors = [
+          'a[href*="signin"]',
+          '[aria-label*="Sign in"]',
+          'button:has-text("Sign in")',
+          '.gb_Sd'  // Sign in button in Google bar
+        ];
+        
+        let signInFound = false;
+        for (const selector of signInSelectors) {
+          try {
+            const element = await page.$(selector);
+            if (element) {
+              await element.click();
+              console.log(`Clicked sign in element: ${selector}`);
+              signInFound = true;
+              break;
+            }
+          } catch (e) {
+            console.log(`Sign in selector failed: ${selector} - ${e.message}`);
+          }
+        }
+        
+        // If no sign in button found, try text-based approach
+        if (!signInFound) {
+          try {
+            const signInClicked = await page.evaluate(() => {
+              const elements = document.querySelectorAll('a, button');
+              for (const el of elements) {
+                const text = el.textContent?.toLowerCase() || '';
+                const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || '';
+                if (text.includes('sign in') || ariaLabel.includes('sign in')) {
+                  el.click();
+                  return true;
+                }
+              }
+              return false;
+            });
+            
+            if (signInClicked) {
+              console.log('Sign in clicked via text search');
+              signInFound = true;
+            }
+          } catch (e) {
+            console.log('Text-based sign in search failed:', e.message);
+          }
+        }
+        
+        if (signInFound) {
+          // Wait for navigation to sign in page
+          try {
+            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+          } catch (e) {
+            console.log('Navigation timeout after sign in click, continuing...');
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        // Perform authentication
         updateMetadata(recordingDir, { 
           status: 'authenticating',
           authenticatingWith: googleAuth.email
         });
         
         try {
-          // Take screenshot before authentication
-          const authScreenshot = path.join(recordingDir, 'auth_before_screenshot.png');
-          await page.screenshot({ path: authScreenshot, fullPage: true });
-          console.log(`Auth screenshot saved: ${authScreenshot}`);
-          
-          // Check if we're already on a Google login page
-          const currentUrl = page.url();
-          const isOnGoogleLogin = currentUrl.includes('accounts.google.com');
-          
-          console.log(`Current URL: ${currentUrl}`);
-          console.log(`Already on Google login page: ${isOnGoogleLogin}`);
-          
-          let signInClicked = false;
-          
-          // If not on Google login page, try to navigate there
-          if (!isOnGoogleLogin) {
-            console.log('Not on Google login page, trying to click sign in...');
-            
-            const signInSelectors = [
-              'a[href*="accounts.google.com"]',
-              '[aria-label*="Sign in"]',
-              '[data-action="signin"]',
-              'button[data-action="signin"]'
-            ];
-            
-            // First try regular CSS selectors
-            for (const selector of signInSelectors) {
-              try {
-                const element = await page.$(selector);
-                if (element) {
-                  // Check if element is still attached
-                  const isAttached = await element.evaluate(el => el.isConnected);
-                  if (isAttached) {
-                    await element.click();
-                    console.log(`Clicked sign in element: ${selector}`);
-                    signInClicked = true;
-                    break;
-                  } else {
-                    console.log(`Element detached: ${selector}`);
-                  }
-                }
-              } catch (e) {
-                console.log(`Sign in selector failed: ${selector} - ${e.message}`);
-              }
-            }
-            
-            // Try text-based search as fallback using evaluate instead of $x
-            if (!signInClicked) {
-              try {
-                const signInTexts = ['Sign in', 'Sign In', 'SIGN IN', 'Login', 'LOG IN'];
-                for (const text of signInTexts) {
-                  const clickableElements = await page.evaluate((searchText) => {
-                    const walker = document.createTreeWalker(
-                      document.body,
-                      NodeFilter.SHOW_TEXT,
-                      null,
-                      false
-                    );
-                    
-                    const matchingElements = [];
-                    let node;
-                    
-                    while (node = walker.nextNode()) {
-                      if (node.textContent.trim() === searchText) {
-                        let element = node.parentElement;
-                        while (element) {
-                          if (element.tagName === 'BUTTON' || element.tagName === 'A' || 
-                              element.getAttribute('role') === 'button' ||
-                              element.onclick || element.getAttribute('data-action')) {
-                            const rect = element.getBoundingClientRect();
-                            if (rect.width > 0 && rect.height > 0) {
-                              matchingElements.push({
-                                tagName: element.tagName,
-                                text: element.textContent.trim(),
-                                className: element.className,
-                                id: element.id
-                              });
-                              break;
-                            }
-                          }
-                          element = element.parentElement;
-                        }
-                      }
-                    }
-                    return matchingElements;
-                  }, text);
-                  
-                  if (clickableElements.length > 0) {
-                    // Try to click the first matching element
-                    const clicked = await page.evaluate((searchText) => {
-                      const walker = document.createTreeWalker(
-                        document.body,
-                        NodeFilter.SHOW_TEXT,
-                        null,
-                        false
-                      );
-                      
-                      let node;
-                      while (node = walker.nextNode()) {
-                        if (node.textContent.trim() === searchText) {
-                          let element = node.parentElement;
-                          while (element) {
-                            if (element.tagName === 'BUTTON' || element.tagName === 'A' || 
-                                element.getAttribute('role') === 'button' ||
-                                element.onclick || element.getAttribute('data-action')) {
-                              const rect = element.getBoundingClientRect();
-                              if (rect.width > 0 && rect.height > 0) {
-                                element.click();
-                                return true;
-                              }
-                            }
-                            element = element.parentElement;
-                          }
-                        }
-                      }
-                      return false;
-                    }, text);
-                    
-                    if (clicked) {
-                      console.log(`Clicked sign in text: "${text}"`);
-                      signInClicked = true;
-                      break;
-                    }
-                  }
-                }
-              } catch (e) {
-                console.log(`Text-based sign in search failed: ${e.message}`);
-              }
-            }
-            
-            if (signInClicked) {
-              // Wait for navigation to login page
-              console.log('Waiting for navigation to Google login page...');
-              try {
-                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
-              } catch (e) {
-                console.log('Navigation timeout, but continuing - may have navigated');
-              }
-              
-              // Extra wait for page to stabilize
-              await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-          } else {
-            console.log('Already on Google login page');
-          }
-          
-          // Take screenshot after any navigation
-          console.log('Taking screenshot after potential navigation...');
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          const afterClickScreenshot = path.join(recordingDir, 'auth_after_navigation_screenshot.png');
-          await page.screenshot({ path: afterClickScreenshot, fullPage: true });
-          console.log(`After navigation screenshot saved: ${afterClickScreenshot}`);
-          
-          // Check current URL again after potential navigation
-          const newUrl = page.url();
-          console.log(`Current URL after navigation: ${newUrl}`);
-          
-          // Try multiple selectors for email field with longer timeout
+          // Look for email field
           const emailSelectors = [
             'input[type="email"]',
             '#identifierId',
             'input[name="identifier"]',
             'input[autocomplete="username"]',
-            'input[autocomplete="email"]',
-            'input[name="Email"]',
-            '#Email',
-            'input[id*="email"]',
-            'input[id*="identifier"]'
+            'input[autocomplete="email"]'
           ];
           
           let emailField = null;
-          
-          // First wait for the page to be on a Google login URL
-          let waitCount = 0;
-          while (!page.url().includes('accounts.google.com') && waitCount < 10) {
-            console.log(`Waiting for Google login page... (attempt ${waitCount + 1})`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            waitCount++;
-          }
-          
-          console.log(`Final URL before email field search: ${page.url()}`);
-          
           for (const selector of emailSelectors) {
             try {
-              console.log(`Looking for email field: ${selector}`);
               emailField = await page.waitForSelector(selector, { timeout: 8000 });
               if (emailField) {
                 console.log(`Found email field: ${selector}`);
@@ -303,20 +188,35 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           }
           
           if (!emailField) {
-            // Take failure screenshot
             const failScreenshot = path.join(recordingDir, 'auth_email_field_not_found.png');
             await page.screenshot({ path: failScreenshot, fullPage: true });
-            console.log(`Email field not found screenshot saved: ${failScreenshot}`);
-            throw new Error('Could not find email input field after clicking sign in');
+            throw new Error('Could not find email input field on Google accounts page');
           }
           
           await emailField.click();
           await emailField.type(googleAuth.email);
           
           // Click next button
-          const nextButton = await page.$('#identifierNext, button[type="submit"]');
-          if (nextButton) {
-            await nextButton.click();
+          const nextSelectors = ['#identifierNext', 'button[type="submit"]', '[jsname="LgbsSe"]'];
+          let nextClicked = false;
+          for (const selector of nextSelectors) {
+            try {
+              const nextButton = await page.$(selector);
+              if (nextButton) {
+                await nextButton.click();
+                nextClicked = true;
+                console.log(`Clicked next button: ${selector}`);
+                break;
+              }
+            } catch (e) {
+              console.log(`Next button selector failed: ${selector}`);
+            }
+          }
+          
+          if (!nextClicked) {
+            // Try Enter key as fallback
+            await emailField.press('Enter');
+            console.log('Pressed Enter on email field');
           }
           
           // Wait for password field
@@ -326,19 +226,41 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           await passwordField.type(googleAuth.password);
           
           // Click password next button
-          const passwordNext = await page.$('#passwordNext, button[type="submit"]');
-          if (passwordNext) {
-            await passwordNext.click();
+          const passwordNextSelectors = ['#passwordNext', 'button[type="submit"]', '[jsname="LgbsSe"]'];
+          let passwordNextClicked = false;
+          for (const selector of passwordNextSelectors) {
+            try {
+              const passwordNext = await page.$(selector);
+              if (passwordNext) {
+                await passwordNext.click();
+                passwordNextClicked = true;
+                console.log(`Clicked password next: ${selector}`);
+                break;
+              }
+            } catch (e) {
+              console.log(`Password next selector failed: ${selector}`);
+            }
           }
           
-          // Wait for navigation back to Meet
+          if (!passwordNextClicked) {
+            // Try Enter key as fallback
+            await passwordField.press('Enter');
+            console.log('Pressed Enter on password field');
+          }
+          
+          // Wait for successful login - should redirect to myaccount or similar
           await page.waitForFunction(
-            (url) => window.location.href.includes('meet.google.com'),
-            { timeout: 30000 },
-            meetUrl
+            () => {
+              const url = window.location.href;
+              return url.includes('myaccount.google.com') || 
+                     url.includes('accounts.google.com/signin/continue') ||
+                     url.includes('accounts.google.com/b/0/ManageAccount') ||
+                     document.querySelector('[data-ogsr-up]'); // Account avatar present
+            },
+            { timeout: 30000 }
           );
           
-          console.log('Google authentication completed, back on Meet page');
+          console.log('Google authentication completed successfully');
           updateMetadata(recordingDir, { 
             status: 'authenticated',
             authenticatedAt: new Date().toISOString()
@@ -346,6 +268,8 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           
         } catch (error) {
           console.error('Google authentication failed:', error.message);
+          const authFailScreenshot = path.join(recordingDir, 'auth_failed_screenshot.png');
+          await page.screenshot({ path: authFailScreenshot, fullPage: true });
           updateMetadata(recordingDir, {
             status: 'auth_failed',
             error: `Google authentication failed: ${error.message}`,
@@ -354,9 +278,24 @@ async function recordMeeting(recordingId, meetUrl, options, googleAuth = {}) {
           throw new Error(`Authentication failed: ${error.message}`);
         }
       } else {
-        console.log('No login required - already authenticated or anonymous access');
+        console.log('Already authenticated with Google account, proceeding to Meet...');
+        updateMetadata(recordingDir, { 
+          status: 'already_authenticated',
+          authenticatedAt: new Date().toISOString()
+        });
       }
     }
+    
+    // Now navigate to Meet URL with authenticated session
+    console.log(`Navigating to Meet with authenticated session: ${meetUrl}`);
+    await page.goto(meetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    console.log('Meet page loaded successfully');
+    
+    // The authentication is already handled above, so we can proceed directly to meeting join
+    updateMetadata(recordingDir, { 
+      status: 'ready_to_join',
+      meetPageLoadedAt: new Date().toISOString()
+    });
     
     // Join meeting logic - try multiple selector approaches
     console.log('Waiting for meeting interface...');
